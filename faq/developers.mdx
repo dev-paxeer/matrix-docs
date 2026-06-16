@@ -1,0 +1,22 @@
+---
+title: Developers FAQ
+description: "Questions for people building on Matrix — modules, skill authoring, the replay invariant, closed vocabularies, and contribution rules."
+---
+
+<AccordionGroup>
+  <Accordion title="How do I build the project?">
+    `make build` compiles the Go modules, `make install` drops CLIs into `./bin`, and `make ci` runs the full local gate. See [Build, Test & Lint](/developer/build-test-lint).
+  </Accordion>
+  <Accordion title="How do I add a new capability?">
+    Author a `SKILL.mtx` (see [MCL & Skill Authoring](/developer/mcl)) and grant it the version-pinned tool URIs it needs. To add a new tool, register an MCP server in the agent manifest (see [Writing a Tool Bridge](/mcp/writing-a-tool-bridge)).
+  </Accordion>
+  <Accordion title="Can I add a new verb or object kind?">
+    Not casually. The 10 verbs (D7) and 8 object kinds are closed vocabularies. Adding one is a journaled migration with an explicit schema-version bump — not a one-line change.
+  </Accordion>
+  <Accordion title="What is the replay invariant and why do I care?">
+    Dropping cortex's derived state and rebuilding from the journal must yield a byte-identical `OverallRoot`. Any change to a cortex mutation path must preserve it and add a rebuild test. It runs on every PR.
+  </Accordion>
+  <Accordion title="What's the bar for a PR?">
+    A clean `make ci` + `make lint`, tests for new behavior, no weakened tests, and a `matrix.kvx` update if you move a phase status or invariant. Design changes that move a locked decision need a design-review PR first.
+  </Accordion>
+</AccordionGroup>

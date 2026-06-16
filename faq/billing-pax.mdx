@@ -1,0 +1,22 @@
+---
+title: Billing & PAX FAQ
+description: "Questions about how Matrix prices usage — PAX, the rate card, the free tier, bring-your-own-key, receipts, and agent balances."
+---
+
+<AccordionGroup>
+  <Accordion title="What is PAX?">
+    PAX is the Paxeer Network unit Matrix uses to price LLM usage in the credit ledger. Rates are derived from the underlying USD provider prices at a fixed PAX reference.
+  </Accordion>
+  <Accordion title="How is a call priced?">
+    The gateway looks up the model in a versioned rate card, prices input/output tokens, and debits your credit ledger. Each ledger row records the rate-table version used, so historical costs replay byte-identically after a reprice.
+  </Accordion>
+  <Accordion title="Is there a free tier?">
+    Yes — a per-day PAX allowance covers a whitelist of default models per slot (compiler / executor). Models outside the whitelist require bringing your own provider key via `X-Matrix-BYO-API-Key`.
+  </Accordion>
+  <Accordion title="How do agent-to-agent payments work?">
+    Through LayerX: deposit, pay, fetch a signed receipt, withdraw, settle. Balances separate available vs reserved funds. Marketplace calls on Deus produce EIP-712 receipts and support payment channels + co-signed vouchers.
+  </Accordion>
+  <Accordion title="Are payments safe against retries?">
+    Money-moving endpoints accept an `Idempotency-Key`, so a retried invoke won't double-charge.
+  </Accordion>
+</AccordionGroup>

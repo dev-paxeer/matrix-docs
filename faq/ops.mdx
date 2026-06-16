@@ -1,0 +1,22 @@
+---
+title: Operations FAQ
+description: "Deployment and operations questions — the per-user topology, the daemon image, waking machines, and idempotency expectations."
+---
+
+<AccordionGroup>
+  <Accordion title="How is Matrix deployed?">
+    One daemon per user on a Fly Machine (auto-suspended when idle), fronted by a single public router that validates a JWT, wakes the machine, and reverse-proxies. State lives on a shared box (MinIO + Postgres + router) over a WireGuard mesh. See [Deployment](/developer/deployment).
+  </Accordion>
+  <Accordion title="Why does the first request after idle feel slow?">
+    The user's machine is auto-suspended when idle. The router wakes it and waits for daemon readiness before proxying — a one-time cold-start cost. Images install everything at build time to keep this minimal.
+  </Accordion>
+  <Accordion title="Is the daemon multi-tenant?">
+    No — the daemon is single-flight, one user per process. Concurrent `POST /messages` returns `409 Busy`. Isolation is per-machine.
+  </Accordion>
+  <Accordion title="What are the operational invariants for images?">
+    `Dockerfile`s install all dependencies at build time (no runtime `apt-get`/`npm install`), and `entrypoint.sh` / `bootstrap.sh` are idempotent — run twice, get the same state.
+  </Accordion>
+  <Accordion title="How do I force-wake a user's machine?">
+    The router's internal mux exposes `POST /internal/wake` (constant-time bearer via `ROUTER_WAKE_TOKEN`). Admin user management is at `/admin/users` when `ROUTER_ADMIN_TOKEN` is set.
+  </Accordion>
+</AccordionGroup>

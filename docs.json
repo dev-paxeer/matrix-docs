@@ -47,6 +47,15 @@
               "concepts",
               "glossary"
             ]
+          },
+          {
+            "group": "User Guide",
+            "icon": "user",
+            "pages": [
+              "user-guide/chat",
+              "user-guide/skills",
+              "user-guide/wallet"
+            ]
           }
         ]
       },
@@ -112,6 +121,24 @@
               "mcp/tool-servers",
               "mcp/writing-a-tool-bridge",
               "mcp/server-templates"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "FAQ",
+        "icon": "circle-question",
+        "groups": [
+          {
+            "group": "FAQ",
+            "icon": "circle-question",
+            "pages": [
+              "faq/general",
+              "faq/users",
+              "faq/developers",
+              "faq/ops",
+              "faq/billing-pax",
+              "faq/security"
             ]
           }
         ]
