@@ -1,0 +1,59 @@
+---
+title: Executor
+description: "Where intents become work — the lifecycle state machine, the pluggable plan walker, MCP tool dispatch, the materiality classifier, and the single-flight per-user daemon."
+---
+
+The **executor** turns an Intent IR into executed work. It owns the plan walker, the lifecycle machine, MCP tool dispatch, and the per-user daemon.
+
+## Key surfaces
+
+| Package | Role |
+| --- | --- |
+| `lifecycle/` | 8-state machine (drafting → completed/failed/cancelled). |
+| `mcp/` | JSON-RPC 2.0 client + stdio + streamable-HTTP transports + `Manager`. |
+| `tool/` | `Tool` interface + `Registry` + URI scheme + capability gate. |
+| `runtime/` | Plan walker (DFS, goroutine-per-`parallel`) + skill loader. |
+| `materiality/` | D9 §18.1 classifier (8 rules). |
+| `cmd/mcl-tools/` | `verify` / `list` / `describe` / `call` subcommands. |
+| `cmd/mcl-execute/` | `walk` / `classify` / `loader` / `daemon` subcommands. |
+| `cmd/mcl-e2e/` | Live end-to-end harness (3-run sweep, 75 assertions). |
+
+## The plan walker
+
+The walker DFS-walks a `PlanTree`:
+
+- `sequential` / `parallel` — branch nodes (parallel fans out one goroutine per child).
+- `tool_call` — `Registry.Get(uri) → Tool.Call(args)`.
+- `step` — `StepHandler.HandleStep(prompt)` → the executor LLM.
+- `sub_dispatch` — opt-in via `-allow-sub-dispatch`.
+- `gate` — `GateHandler.HandleGate(question)` (stdin in CLI mode).
+
+It is **pluggable**: `StepHandler` / `SubDispatchHandler` / `GateHandler` are interfaces with sane defaults (Noop / NotImplemented / Noop). Production wires the LLM `StepHandler` from `cmd/mcl-execute`.
+
+<Note>
+`runtime/walker.go` is the canonical walker. The harness walkers in `cmd/mcl-e2e/` may drift for testability but are not the source of truth.
+</Note>
+
+## Tool dispatch & capability gate
+
+Tool URIs must be version-pinned (`@<semver>` or `@sha256:…`) at parse time — `ErrUnpinnedTool` fires on bare-head URIs. The capability gate checks each call against the skill's declared `§TOOLS` allowlist; an undeclared tool call fails closed. MCP credentials are `$env:NAME` references, never literal values.
+
+## Lifecycle and attestation
+
+Each lifecycle transition is recorded as a signed (ed25519) envelope, written as JSON under `journal/<intent_id>/<seq>-<kind>.json`. Each step also journals a cortex `Event`. On a terminal state, `cortex.Attest(IntentID, Outcome, Reason, Cited[], CreatedBy)` writes `KindAttest` + `KindLearnWeights` atomically.
+
+## The daemon
+
+`mcl-execute daemon` is **single-flight** — one user per process. A concurrent `/messages` returns `409 Busy` (`sync.Mutex.TryLock`). The SSE broker uses per-subscriber buffered channels with drop-on-backpressure.
+
+```bash
+./bin/mcl-execute daemon \
+  -addr        :8080 \
+  -cortex-root ./runs/dev-cortex \
+  -manifest    agents/default.json \
+  -skills-root ./skills
+```
+
+<Card title="Daemon API reference" icon="plug" href="/api-reference/daemon">
+  Full route list, request/response shapes, and SSE event types.
+</Card>

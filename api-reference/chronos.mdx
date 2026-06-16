@@ -1,0 +1,48 @@
+---
+title: Chronos API
+description: "The centralized agent scheduler — agent DID authentication plus create, list, get, and cancel alarms that wake an agent at a scheduled time."
+---
+
+**Chronos** is the centralized agent scheduler / wake-up system. Agents authenticate with their DID, then create alarms that fire a wake at a scheduled time.
+
+## Routes
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| GET | `/healthz` | Liveness. |
+| GET | `/` | Service root / info. |
+| POST | `/v1/agent/auth/challenge` | Request a nonce for the agent DID. |
+| POST | `/v1/agent/auth/verify` | Verify the signed nonce → session token. |
+| POST | `/v1/alarms` | Create an alarm. |
+| GET | `/v1/alarms` | List the agent's alarms. |
+| GET | `/v1/alarms/{id}` | Get one alarm. |
+| DELETE | `/v1/alarms/{id}` | Cancel an alarm. |
+
+## Authentication
+
+See the [shared agent DID handshake](/api-reference/overview#agent-did-authentication): `POST /v1/agent/auth/challenge` → sign the nonce → `POST /v1/agent/auth/verify`.
+
+## Create an alarm
+
+<ParamField body="fire_at" type="string (ISO 8601)" required>
+  When the alarm should fire.
+</ParamField>
+<ParamField body="payload" type="object">
+  Opaque data delivered to the agent on wake.
+</ParamField>
+
+<RequestExample>
+```bash cURL
+curl -X POST https://chronos.example/v1/alarms \
+  -H "Authorization: Bearer $CHRONOS_SESSION" \
+  -H "Content-Type: application/json" \
+  -d '{"fire_at": "2026-06-20T09:00:00Z", "payload": {"task": "daily-digest"}}'
+```
+</RequestExample>
+
+<ResponseField name="id" type="string" required>
+  The alarm identifier (used for get/cancel).
+</ResponseField>
+<ResponseField name="status" type="string">
+  `scheduled`, `fired`, or `cancelled`.
+</ResponseField>

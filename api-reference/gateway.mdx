@@ -1,0 +1,52 @@
+---
+title: Gateway API
+description: "The metered, OpenAI-compatible LLM proxy — chat completions and embeddings, priced per model against a versioned PAX rate card and debited from a per-user credit ledger."
+---
+
+The **gateway** is an OpenAI-compatible LLM proxy that meters every call: it prices the request against a versioned rate card, debits a per-user PAX credit ledger, then forwards to the upstream provider.
+
+## Routes
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| GET | `/healthz` | Liveness. |
+| POST | `/v1/chat/completions` | OpenAI-compatible chat completion (metered). |
+| POST | `/v1/embeddings` | Embeddings (input-only pricing; metered). |
+
+## Metering model
+
+<Steps>
+  <Step title="Price">
+    The model id is looked up in the versioned rate card (`RateTableVersion`). PAX rates are derived from USD provider prices at a fixed PAX reference.
+  </Step>
+  <Step title="Gate">
+    Free-tier callers are restricted to a per-slot model whitelist and a daily PAX cap. Other models require `X-Matrix-BYO-API-Key`.
+  </Step>
+  <Step title="Debit">
+    Token usage is priced and written to the `credit_ledger`, recording the `rate_table_v` so historical rows replay byte-identically after a reprice.
+  </Step>
+</Steps>
+
+<Info>
+Every ledger row records the rate-table version that priced it, so historical costs remain auditable and reproducible even after the rate card is bumped.
+</Info>
+
+## Chat completions
+
+<RequestExample>
+```bash cURL
+curl -X POST https://gateway.example/v1/chat/completions \
+  -H "Authorization: Bearer $MATRIX_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "accounts/fireworks/models/gpt-oss-120b",
+    "messages": [{"role": "user", "content": "Hello"}]
+  }'
+```
+</RequestExample>
+
+The response is the standard OpenAI chat-completion shape. Cost accounting happens server-side; inspect the credit ledger for the debited PAX amount and the `rate_table_v` used.
+
+<Card title="Pricing & PAX" icon="coins" href="/faq/billing-pax">
+  How PAX, the rate card, and the free tier work.
+</Card>

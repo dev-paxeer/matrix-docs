@@ -1,0 +1,99 @@
+---
+title: Architecture
+description: "The layered Matrix model — MCL compiler, cortex memory, bridge, executor walker, and the surrounding service modules — plus the cross-cutting compile / execute / replay flows."
+---
+
+Matrix is a polyglot monorepo built around a shared execution stack: MCL compiles intent, `bridge` connects the compiler to a live `cortex`, `executor` turns plans into work, and the surrounding modules handle operator control, settlement, routing, and service integration.
+
+<Note>
+The canonical source of truth is split: design decisions live in `research/` (chapters 00–06), and project state (phase status, locked Q-decisions, invariants) lives in `knowledge/matrix.kvx`. If anything here contradicts `matrix.kvx`, the kvx wins.
+</Note>
+
+## Layered model
+
+```text
+                              user prose
+                                  │
+                                  ▼
+          ┌───────────────────────────────────────────────┐
+          │                 MCL compiler                   │
+          │  lexer → parser → validator → canonical        │
+          │     \                                  /        │
+          │      → interpreter ← LLM ← grammar             │
+          │              │                                 │
+          │              ▼                                 │
+          │          Intent IR  (closed verb, closed kind) │
+          └──────────────────────┬────────────────────────┘
+                                  ▼
+                            ┌─────────────┐
+                            │   bridge    │  MCL.Cortex adapter
+                            └──────┬──────┘
+                                   ▼
+   ┌──────────────────┐    ┌───────────────┐    ┌──────────────────┐
+   │  agent manifest  │───▶│    cortex     │◀───│ executor walker  │
+   │  (DID-bound)     │    │   (Pebble)    │    │ + MCP dispatch   │
+   └──────────────────┘    └───────┬───────┘    └────────┬─────────┘
+                                   │                     ▼
+                                   │             ┌───────────────┐
+                                   │             │  MCP servers  │
+                                   │             │  (subprocess) │
+                                   │             └───────┬───────┘
+                                   └──────── events ──────┘
+                                              │
+                                              ▼
+                                      attest + EMA loop
+```
+
+## The core Go modules
+
+Each is independently `go build`/`go test`able with its own `go.mod`. Cross-module imports use `replace` directives during development and explicit versions on publish.
+
+<Columns cols={2}>
+  <Card title="cortex" icon="database">
+    Per-actor typed memory graph on Pebble. Authoritative, byte-deterministic, replay-rebuildable.
+  </Card>
+  <Card title="MCL" icon="diagram-project">
+    MatrixScript compiler. Turns prose + a `SKILL.mtx` + a verb hint into an Intent IR.
+  </Card>
+  <Card title="bridge" icon="link">
+    Stateless adapter wiring the MCL compiler's `Cortex` interface to a live `*cortex.Cortex`.
+  </Card>
+  <Card title="executor" icon="gears">
+    Lifecycle machine, runtime walker, MCP client + tool registry, per-user daemon, e2e harness.
+  </Card>
+</Columns>
+
+Surrounding service modules: `neo` (conversational agent), `gateway` (metered LLM proxy + PAX ledger), `router` (Fly Machine provisioning), `deus` (marketplace), `layerx` (settlement), `uwac` (web connectors), `tachyon` (EVM engine), and `chronos` (scheduler).
+
+## Cross-cutting flows
+
+<Steps>
+  <Step title="Compile (cold-start)">
+    `mclc compile` reads a `SKILL.mtx` + prose → lexer/parser/validator/canonical hash → the interpreter walks `§PROCEDURE` (`on verb=…` first-match-wins, prompt interpolation, `resolve slot.X <- cortex.find(...)`) → the Frame is extracted under a grammar-constrained decode → the Intent IR is hashed deterministically.
+  </Step>
+  <Step title="Execute">
+    `mcl-execute walk` synthesizes a `PlanTree` from the Intent, then DFS-walks it: `sequential`/`parallel` branches, `tool_call → Registry.Get(uri) → Tool.Call`, `step → StepHandler`, `gate → GateHandler`. Each step journals a cortex Event; lifecycle envelopes are signed (ed25519).
+  </Step>
+  <Step title="Attest">
+    On a terminal state, `cortex.Attest(IntentID, Outcome, Reason, Cited[], CreatedBy)` writes `KindAttest` + `KindLearnWeights` in one atomic Pebble batch. The EMA learner pulls per-actor salience weights toward (or away from) the cited memories.
+  </Step>
+  <Step title="Replay (§13.4)">
+    `cortex-shell rebuild -verify-only` captures `OverallRoot`, drops derived state, walks heads + edges + journal in order, re-emits every derived index, and requires the post-rebuild `OverallRoot` to be byte-identical. Run on every PR by the `replay-invariant` CI job.
+  </Step>
+</Steps>
+
+## Production topology
+
+- **Compute:** one Fly Machine per user, auto-suspended when idle, with a per-Machine Volume at `/data`.
+- **State:** a dedicated box hosts MinIO (per-user snapshots) + Postgres (user → machine mapping) + `matrix-router`.
+- **Network:** WireGuard mesh between Machines and the box; only the router's `:443` is public.
+- **Auth:** Supabase Auth → JWT → router validates → wakes the user's Machine via the Fly Machines API → reverse-proxies.
+
+<Columns cols={2}>
+  <Card title="Cortex internals" icon="database" href="/developer/cortex">
+    The memory graph, journal, salience, and snapshots.
+  </Card>
+  <Card title="Determinism & replay" icon="shield-halved" href="/developer/determinism-replay">
+    The invariant that makes the whole stack auditable.
+  </Card>
+</Columns>

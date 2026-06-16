@@ -49,6 +49,33 @@
             ]
           }
         ]
+      },
+      {
+        "tab": "Developer",
+        "icon": "code",
+        "groups": [
+          {
+            "group": "Core",
+            "icon": "layer-group",
+            "pages": [
+              "developer/architecture",
+              "developer/mcl",
+              "developer/cortex",
+              "developer/executor",
+              "developer/neo",
+              "developer/determinism-replay"
+            ]
+          },
+          {
+            "group": "Build & Contribute",
+            "icon": "hammer",
+            "pages": [
+              "developer/build-test-lint",
+              "developer/contributing",
+              "developer/deployment"
+            ]
+          }
+        ]
       }
     ]
   }

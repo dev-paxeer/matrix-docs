@@ -1,0 +1,143 @@
+---
+title: MCL & Skill Authoring
+description: "The MatrixScript compiler pipeline and how to write a SKILL.mtx — required sections, the §PROCEDURE on-blocks, slot resolution, unknowns, and validation."
+---
+
+**MCL** (Matrix Communication Layer) is the compiler that turns prose + a `SKILL.mtx` + a verb hint into a typed **Intent IR**. It is stdlib-only outside the `llm/` package.
+
+## Compiler pipeline
+
+<Steps>
+  <Step title="Lex & parse">
+    The lexer normalizes CRLF→LF, recognizes `§SECTION` headers, 2-space INDENT, and `matrix://` URIs. The recursive-descent parser follows the EBNF in `mtx/grammar.bnf` into an AST (`File` / `Section` / `OnBlock` / `PromptBlock`).
+  </Step>
+  <Step title="Validate">
+    The validator enforces the spec rules (V1–V12): required sections, version-pinned tool URIs, prompt blocks needing `system=`+`user=`, slots declared before use, closed `kind=` and `reason=` sets.
+  </Step>
+  <Step title="Canonical hash">
+    The AST is hashed with sha256, excluding comments, blanks, and `§HASH` — so reformatting never changes the digest. Skills are content-addressed and reformat-safe.
+  </Step>
+  <Step title="Interpret & extract">
+    The interpreter walks `§PROCEDURE` on-blocks first-match-wins, interpolates the prompt, resolves slots against cortex, and registers unknowns. The Frame is extracted under a grammar-constrained decode (`intent_frame@1`, temp=0, seed=42).
+  </Step>
+</Steps>
+
+## Closed vocabularies
+
+- **10 verbs (D7):** `find acquire build modify deliver analyze negotiate schedule monitor delegate`. Extensions use an `x:` prefix.
+- **8 object kinds:** `service model agent knowledge intent asset plan capability`.
+
+These are not extension points — adding a verb or kind is a journaled migration with an explicit schema-version bump.
+
+## Writing a SKILL.mtx
+
+A skill lives at `skills/<slug>/SKILL.mtx`. Every skill must have exactly these 8 sections (validator rule V1):
+
+```mtx
+§SKILL
+§INPUTS
+§CORTEX
+§TOOLS
+§SUB_SKILLS
+§PROCEDURE
+§OUTPUTS
+§FAILURE_MODES
+```
+
+`§HASH` is optional and added by tooling — never write it by hand.
+
+### Metadata and inputs
+
+```mtx
+§SKILL
+name="Writing Plans"            # must be double-quoted
+version=1.0.0                   # semver
+mcl.verbs=build modify          # D7 closed set; space-separated
+description="Creates or updates a structured plan document"
+
+§INPUTS
+slot target: ArtifactRef
+  required
+  hint="The plan document to create or update"
+
+slot deadline: iso8601
+  optional
+  hint="Target completion date"
+```
+
+<Warning>
+Always double-quote `hint=`, `reason=`, `prompt=`, and `description=` values. Unquoted, the lexer parses the words as a space-separated ident list and the value is silently wrong.
+</Warning>
+
+### The §PROCEDURE on-blocks
+
+The interpreter walks on-blocks top-to-bottom, first-match-wins. The standard pattern is one verb-branch per verb plus an `unknown` fallback:
+
+```mtx
+§PROCEDURE
+
+on verb=build
+  kind="write"
+  prompt
+    system="You are a plan writer. Extract a structured plan.\n\nContext: {cortex.bundle}"
+    user="User goal: {prose}\n\nDeadline: {slot.deadline}"
+  end
+  resolve slot.target <- cortex.find(type="ArtifactRef", near=slot.target.prose)
+end
+
+on confidence<0.75
+  clarify slot.target
+    prompt="Which document are you referring to?"
+    type=ArtifactRef
+    required=true
+  end
+end
+
+on unknown
+  unknown slot.target
+    severity=blocking
+    reason="I need to know which document to work on."
+    options=[README CHANGELOG spec]
+  end
+end
+```
+
+### Resolving references and gaps
+
+Every NL entity reference must resolve to a `matrix://` URI before the user signs (D13):
+
+- `cortex.find(type=…, near=…)` — typed semantic lookup (most common).
+- `cortex.resolve(name)` — exact resolution when the name is known.
+- `cortex.context(verb=…)` — fetch a full context bundle into a slot.
+
+Unresolvable slots become **unknowns** with severity `blocking` (stops execution), `preferred`, or `optional` (advisory; still generates a clarify question).
+
+### Tools, sub-skills, outputs, failures
+
+```mtx
+§TOOLS
+matrix://tool/mcp/filesystem/fs_write@0.1.0   # version-pinned; @latest rejected (V10)
+
+§FAILURE_MODES
+budget_exceeded
+  action=fail
+  reason=out_of_budget          # closed set (V8)
+  suggest=raise_budget
+```
+
+The `reason=` value must be in the closed set: `unknown_information`, `policy_violation`, `out_of_budget`, `out_of_scope`, `ambiguous_request`, `tool_failure`, `external_failure`, `timeout`, `cancelled_by_user`, `correction_invalid`.
+
+## Validate and dry-run
+
+```bash
+mclc validate skills/my-skill/SKILL.mtx           # strict validation
+mclc hash     skills/my-skill/SKILL.mtx           # canonical digest
+mclc compile -skill skills/my-skill/SKILL.mtx \
+  -prose "Build a deployment plan" -verb build -dry-run
+```
+
+`-dry-run` outputs `prompt_messages`, `slots`, `unknowns`, and `clarify_questions` — the exact interpolated text, no API key required. Add `FIREWORKS_API_KEY` to run the full pipeline and emit the real `frame_json`.
+
+<Card title="MCL CLI reference" icon="terminal" href="/api-reference/cli">
+  Full `mclc` / `mcl-execute` / `mcl-tools` command surface.
+</Card>

@@ -1,0 +1,68 @@
+---
+title: Cortex
+description: "Cortex is the per-actor typed memory graph on Pebble — append-only journal, 9-type taxonomy, salience, embeddings + HNSW, Merkle snapshots, and the load-bearing replay invariant."
+---
+
+**Cortex** is the per-actor typed memory graph. It is authoritative, byte-deterministic, and replay-rebuildable. One Pebble DB per actor; namespaces are key prefixes.
+
+## Key surfaces
+
+| Package | Role |
+| --- | --- |
+| `cortex.go` | Facade: `Write`, `Resolve`, `Update`, `UpdateHead`, `Tombstone`, `Find`, `Context`, `Compact`, `Attest`, `AddEdge`, `RemoveEdge`, `Snapshot`, `OverallRoot`, `Rebuild`. |
+| `store/` | Pebble shell + `BeginWrite` atomic batch + `JournalHook`. |
+| `journal/` | Append-only write log (canonical CBOR entries). |
+| `memory/` | 9-type taxonomy + canonical CBOR + validate. |
+| `keys/` | Key-prefix encoding (memory namespaces). |
+| `query/` | Predicate AST + planner + `Find` with `OrderBy`/`Form`/`Budget`. |
+| `forms/` | Per-type deterministic `Render` for `short`/`medium`/`full`. |
+| `salience/` | 5-factor cold score + EMA weight learner. |
+| `embed/` | Embedder interface + Hash stub + Fireworks API client. |
+| `vector/` | Pure-Go HNSW + persistence. |
+| `snapshot/` | MMR + SMT-256 + `SnapshotManifest` + `OverallRoot`. |
+| `scope/` | Sub-agent `CortexScope` (Merkle-proof-bounded reads). |
+| `replay/` | `DropDerived` + `Rebuild` + §13.4 verifier. |
+
+## Memory taxonomy
+
+Cortex stores a closed set of typed memory records, each with deterministic rendering forms (`short` / `medium` / `full`) so the same record always serializes identically. Common types include `Goal`, `Preference`, `Constraint`, `Fact`, `Pattern`, `Event`, `ArtifactRef`, plus the execution-side `KindAttest` and `KindLearnWeights`.
+
+## Reads: Find and Context
+
+`Find` runs a typed predicate query through a planner. It deliberately rejects unsafe queries:
+
+<Warning>
+`Find` rejects **unbounded** queries (you must pass `Limit` OR `BudgetTokens`) and **too-broad** queries (you must pass `Type` OR `HasTag`). This keeps recall costs predictable and prevents accidental full scans.
+</Warning>
+
+`Context` assembles a deterministic bundle (used for `{cortex.bundle}` prompt interpolation via the bridge). Compile-time `Find` does **not** journal; `LateBinding=true` does.
+
+## Salience and learning
+
+Recall ranking combines a **5-factor cold score** with a per-actor **EMA weight learner**. When an intent terminates, `cortex.Attest` emits `KindLearnWeights` and the EMA pulls the actor's factor weights toward (or away from) the profile of the cited memories — so memory ranking adapts to what actually proved useful.
+
+## Snapshots and proofs
+
+State is Merkle-anchored: an **MMR** over the journal plus an **SMT-256** over current heads, committed by a single `OverallRoot()`. `CortexScope` issues Merkle-proof-bounded reads to sub-agents so a delegate can be handed a verifiable slice of memory without the whole DB.
+
+## Load-bearing invariants
+
+These are enforced in code and must never be relaxed without a schema bump:
+
+- Byte-sort == numeric-sort (BE uint64 keys).
+- One Pebble DB per actor.
+- Journal `seq` is monotonic and gap-free.
+- Every store mutation journals (`ErrBatchNoJournal` enforces it).
+- Atomic batch: journal + head + version + idx/* + salience commit-or-abort together.
+- `#latest` is rejected at URI parse (D13).
+- Tombstoned blocks `Update`; old versions stay resolvable (audit trail).
+- §13.4: drop derived, walk the journal, expect a byte-identical `OverallRoot`.
+
+<Columns cols={2}>
+  <Card title="Determinism & replay" icon="shield-halved" href="/developer/determinism-replay">
+    How the replay invariant is verified.
+  </Card>
+  <Card title="Neo runtime" icon="comments" href="/developer/neo">
+    How the conversational agent pages cortex memory.
+  </Card>
+</Columns>

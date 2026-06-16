@@ -1,0 +1,46 @@
+---
+title: Router API
+description: "The public front door — validates a Supabase JWT, wakes the user's Fly Machine, and reverse-proxies to their daemon. Plus the internal admin and wake surfaces."
+---
+
+The **router** is the only public service (`:443`). It validates a Supabase JWT, ensures the user's Fly Machine is awake, and reverse-proxies the request to their daemon over the WireGuard mesh.
+
+## Public surface
+
+| Method | Path | Auth | Purpose |
+| --- | --- | --- | --- |
+| GET | `/healthz` | none | Liveness (also pings the database). |
+| GET | `/v/version` | none | Router version. |
+| ANY | `/*` | Supabase JWT | Wake-then-reverse-proxy to the user's daemon (`/messages`, `/events`, `/intents/*`, …). |
+
+All non-health traffic flows through the JWT middleware: the token identifies the user, the proxy calls `EnsureStarted` (waking the Machine and waiting for daemon readiness), then forwards.
+
+## Internal surface
+
+The internal mux is bound to a private address (not public):
+
+| Method | Path | Auth | Purpose |
+| --- | --- | --- | --- |
+| GET | `/healthz` | none | Internal liveness. |
+| ANY | `/admin/users` | Admin token | Create / list users. |
+| ANY | `/admin/users/{...}` | Admin token | Per-user operations. |
+| POST | `/internal/wake` | Wake token | Force-wake a user's Machine (constant-time bearer). |
+
+<Info>
+Admin routes mount only when `ROUTER_ADMIN_TOKEN` is set; the wake route mounts only when `ROUTER_WAKE_TOKEN` is set. Both use constant-time bearer comparison.
+</Info>
+
+## Create a user (admin)
+
+<RequestExample>
+```bash cURL
+curl -X POST http://router.internal/admin/users \
+  -H "Authorization: Bearer $ROUTER_ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"user_id": "u_123", "email": "user@example.com"}'
+```
+</RequestExample>
+
+<Card title="Deployment" icon="server" href="/developer/deployment">
+  How the router fits the per-user Fly Machine topology.
+</Card>

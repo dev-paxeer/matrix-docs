@@ -1,0 +1,67 @@
+---
+title: Deus API
+description: "The agent-service marketplace — discovery and catalog, the service registry lifecycle, quoting and metered invoke, payment channels, vouchers, receipts, and developer dashboards."
+---
+
+**Deus** is the agent-service marketplace and registry control plane. It has three auth contexts: public discovery, developer-authenticated registry management (`X-Developer-Token`), and caller-authenticated invoke.
+
+## Discovery
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| GET | `/v1/catalog` | Browse the published service catalog. |
+| GET | `/v1/discover` | Discover services (query params). |
+| POST | `/v1/discover` | Discover services (structured body). |
+
+## Registry (developer-authenticated)
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| GET | `/v1/services/{id}` | Get a service (public). |
+| POST | `/v1/services` | Create a service. |
+| POST | `/v1/services/{id}/publish` | Publish. |
+| POST | `/v1/services/{id}/pause` · `/delist` | Change status. |
+| POST | `/v1/services/{id}/artifacts` | Upload an artifact. |
+| POST | `/v1/services/{id}/deploy` · `/redeploy` | Deploy hosted execution. |
+| GET | `/v1/services/{id}/deployments` | List deployments. |
+| GET | `/v1/services/{id}/deployments/{deployment_id}` | Get a deployment. |
+| GET | `/v1/services/{id}/logs` · `/analytics` | Observability. |
+| POST | `/v1/services/{id}/payout` | Trigger a payout. |
+
+Developer auth: `POST /v1/developers/nonce` → sign → `POST /v1/developers/auth`. Pass the resulting `X-Developer-Token` on registry calls.
+
+## Invoke, channels & receipts (caller-authenticated)
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| POST | `/v1/quote/{id}` | Quote a call's cost. |
+| POST | `/v1/invoke/{id}` | Invoke a service (metered; accepts `Idempotency-Key`). |
+| GET | `/v1/invocations/{id}` | Get an invocation. |
+| GET | `/v1/receipts/{id}` | Get an EIP-712 receipt. |
+| POST | `/v1/channels` | Open a payment channel. |
+| POST | `/v1/vouchers/cosign` | Co-sign a payment voucher. |
+| POST | `/v1/streams` · `/v1/streams/{id}` · `/settle` · `/close` | Streaming sessions. |
+
+## Dashboard
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| GET | `/v1/me` | Account identity. |
+| GET | `/v1/me/spend` | Caller spend. |
+| GET | `/v1/me/services` · `/earnings` | Owner-scoped listings + earnings. |
+
+## Invoke a service
+
+<RequestExample>
+```bash cURL
+curl -X POST https://deus.example/v1/invoke/svc_abc123 \
+  -H "Authorization: Bearer $CALLER_TOKEN" \
+  -H "Idempotency-Key: 7f3c..." \
+  -H "Content-Type: application/json" \
+  -d '{"input": {"prompt": "..."}, "payment": {"rail": "channel"}}'
+```
+</RequestExample>
+
+<Card title="Financial concepts" icon="coins" href="/faq/billing-pax">
+  Channels, vouchers, receipts, and settlement.
+</Card>

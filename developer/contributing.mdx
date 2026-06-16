@@ -1,0 +1,70 @@
+---
+title: Contributing
+description: "Ground rules, branching and conventional commits, quality gates, per-module conventions, and the design-change process for landing a PR in Matrix."
+---
+
+Matrix is design-doc-driven and its surfaces are load-bearing. This page covers the discipline expected of every patch.
+
+<Warning>
+Reporting a security issue? **Stop** and follow [`SECURITY.md`](https://github.com/paxlabs-inc/matrix-core/blob/main/SECURITY.md) instead of opening a public PR.
+</Warning>
+
+## Ground rules
+
+1. **No silent design changes.** Locked decisions live in `research/00-decisions.md` (D1–D18) and per-phase Q-locks in `knowledge/matrix.kvx`. Moving a locked decision must be explicit.
+2. **Replay determinism is load-bearing.** Any `cortex/` change touching mutation paths must preserve a byte-identical `OverallRoot` under `cortex-shell rebuild -verify-only`. The §13.4 invariant is non-negotiable.
+3. **Closed vocabularies are closed.** The 10-verb (D7) and 8-`obj_kind` enums are not extension points — adding one is a journaled migration with a schema-version bump.
+4. **No new dependencies without justification.** The modules ship deliberately small dep graphs.
+5. **Public surfaces are stable.** If you add an exported Go symbol, you own its compatibility story.
+
+## Branching & commits
+
+Flat trunk model on `main`. Branches are `<who>/<short-slug>`. Commits follow Conventional Commits with a per-module scope:
+
+```text
+<type>(<scope>): <summary>
+
+<optional body — wrap at 80 columns>
+
+Refs: matrix.kvx <phase_status>
+```
+
+- **Types:** `feat`, `fix`, `refactor`, `perf`, `test`, `docs`, `build`, `ci`, `chore`, `revert`.
+- **Scopes:** `cortex`, `mcl`, `bridge`, `executor` (code); `deploy`, `skills`, `agents`, `rules`, `research`, `knowledge`, `tools`, `journal` (non-code); `ci`, `meta` (plumbing).
+
+Sign commits with `git commit -S` — preferred for anything touching `cortex/snapshot/`, `cortex/store/`, `MCL/envelope/`, or `deploy/`.
+
+## Quality gates
+
+Every PR must pass `make ci` (gofmt + `go vet` + `go test -race -count=1`) and `make lint`, add tests for new behavior, and not weaken existing tests. Update `knowledge/matrix.kvx` when the change moves a phase status, adds an invariant, or closes a deferral.
+
+## Per-module conventions
+
+| Module | Convention |
+| --- | --- |
+| `cortex/` | One Pebble DB per actor; every mutation goes through `store.BeginWrite`; no new top-level package without a `matrix.kvx` phase entry. |
+| `MCL/` | Stdlib-only outside `llm/`; lexer/parser changes keep `grammar.bnf` in sync; new syntax extends `spec.md` first. |
+| `bridge/` | Stateless adapter; `WithLateBinding(true)` is opt-in. |
+| `executor/` | `runtime/walker.go` is canonical; tool URIs version-pinned at parse time; MCP credentials are `$env:NAME` refs. |
+| `deploy/` | Images install everything at build time (no runtime installs); `entrypoint.sh` and `bootstrap.sh` are idempotent. |
+
+## Pull request process
+
+<Steps>
+  <Step title="Open a draft early">
+    Even a stub PR with the description filled in beats a surprise patch. Tick the affected-modules boxes so reviewers can route by `CODEOWNERS`.
+  </Step>
+  <Step title="Paste verification output">
+    `make ci`, smoke transcripts, or relevant snippets — prove the change does what it says.
+  </Step>
+  <Step title="Keep it scoped">
+    One concern per PR; split refactors from behavior changes. Respond to review with fix-up commits (don't rewrite history mid-review).
+  </Step>
+  <Step title="Squash on merge">
+    History on `main` is one commit per landed PR.
+  </Step>
+</Steps>
+
+## Design changes
+
+Anything that moves a locked decision (D1–D18 + phase Q-locks) requires a design-review PR before code lands: update the relevant `research/` chapter, add the new Q-lock to `matrix.kvx`, and answer *what changes, why now, what it supersedes, and the migration plan*. Journaled schema bumps (cortex SMT, envelope schema, IR canonical JSON) must include a migration test covering both directions.

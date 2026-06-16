@@ -1,0 +1,65 @@
+---
+title: Deployment
+description: "How Matrix runs in production — the per-user daemon image, Fly Machine provisioning via the router, the shared-services box, and the browser/chronos/deus service images."
+---
+
+Matrix runs as one daemon per user, provisioned on demand and fronted by a single public router.
+
+## Production topology
+
+```text
+Supabase Auth ──JWT──▶ matrix-router (:443 public)
+                          │  validate → wake → reverse-proxy
+                          ▼
+                   per-user Fly Machine  (auto-suspend when idle)
+                   └─ /data volume (cortex + workspace)
+                          │  WireGuard mesh
+                          ▼
+              shared box: MinIO (snapshots) + Postgres (user→machine) + router
+```
+
+- **Compute:** one Fly Machine per user, auto-suspended when idle, with a per-Machine Volume mounted at `/data`.
+- **State:** a dedicated box hosts MinIO (per-user state snapshots) + Postgres (user → machine-id mapping) + `matrix-router`.
+- **Network:** WireGuard mesh between Machines and the box; only the router's `:443` is public.
+- **Auth:** Supabase Auth → JWT → router validates → wakes the user's Machine via the Fly Machines API → reverse-proxies.
+
+## The daemon image (`deploy/daemon/`)
+
+A multi-stage build (`golang:1.22-bookworm` builder → `debian:bookworm-slim`) that compiles the Go binaries, installs Node/Python/uv, pre-caches the MCP servers, and bakes in the skill corpus + agent manifests.
+
+| File | Role |
+| --- | --- |
+| `Dockerfile` | Multi-stage daemon image. |
+| `entrypoint.sh` | Idempotent `/data` layout, workspace init, MinIO pull, starts Neo dual-process or standalone daemon. |
+| `fly.toml.tmpl` | Per-user Fly Machine template rendered by the router (`auto_stop_machines=suspend`, volume mount, health checks). |
+
+<Warning>
+Images install everything they need at **build time**. No runtime `apt-get install` / `npm install` — that's a cold-start killer. `entrypoint.sh` must be idempotent: run twice, get the same state.
+</Warning>
+
+## Shared-service images
+
+| Path | Service |
+| --- | --- |
+| `deploy/browser/` | Shared private Playwright/browser runtime (version-pinned, session-isolated, optional bearer auth). |
+| `deploy/chronos/` | `chronosd` systemd unit + idempotent installer + optional nginx snippet. |
+| `deploy/deus/` | Deus control-plane container (binaries + migrations + configs) with a box-deploy guide and env template. |
+
+## Configure
+
+```bash
+cp .env.example .env
+# FIREWORKS_API_KEY / TOGETHER_API_KEY — LLM providers
+# MATRIX_DAEMON_TOKEN — daemon auth
+```
+
+`.env` is gitignored; `.env.example` documents every variable Matrix reads.
+
+<Columns cols={2}>
+  <Card title="Daemon API" icon="plug" href="/api-reference/daemon">
+    The routes the deployed daemon serves.
+  </Card>
+  <Card title="Router API" icon="route" href="/api-reference/router">
+    Provisioning and wake-then-proxy endpoints.
+  </Card>
+</Columns>

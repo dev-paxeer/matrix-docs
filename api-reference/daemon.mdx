@@ -1,0 +1,71 @@
+---
+title: Daemon API
+description: "The per-user Matrix daemon (mcl-execute daemon) HTTP + SSE surface — chat, message submission, the events transcript stream, intent envelope chains, and identity."
+---
+
+The per-user daemon (`mcl-execute daemon`) is the runtime surface for a single user. It is **single-flight**: one user per process, and a concurrent `POST /messages` returns `409 Busy`.
+
+<Info>
+Auth: when started with `MATRIX_DAEMON_TOKEN`, all routes except `/healthz` require `Authorization: Bearer <token>`. In production the [router](/api-reference/router) terminates Supabase JWT auth and proxies here over the WireGuard mesh.
+</Info>
+
+## Routes
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| GET | `/healthz` | Liveness + SSE broker stats. |
+| POST | `/chat` | Converse with the agent (Neo front door). |
+| GET | `/events` | Server-Sent Events tail (live transcript). |
+| POST | `/messages` | Submit a prose message (MCL rigorous rail). |
+| GET | `/intents/{id}` | Read the intent envelope chain by ID. |
+| GET | `/me` | Per-user settings + identity. |
+| POST | `/shutdown` | Graceful drain. |
+
+## Chat
+
+<ParamField body="message" type="string" required>
+  The user's natural-language input for this turn.
+</ParamField>
+
+<RequestExample>
+```bash cURL
+curl -X POST http://localhost:8080/chat \
+  -H "Authorization: Bearer $MATRIX_DAEMON_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"message": "Summarise the README and write it to /tmp/summary.md"}'
+```
+
+```python Python
+import requests
+
+r = requests.post(
+    "http://localhost:8080/chat",
+    headers={"Authorization": f"Bearer {TOKEN}"},
+    json={"message": "Summarise the README and write it to /tmp/summary.md"},
+)
+print(r.json())
+```
+</RequestExample>
+
+## Events stream
+
+`GET /events` is a Server-Sent Events stream of the live transcript: assistant narration (`say`), ephemeral progress (`status`), deliberate notices (`notice`), and tool activity. The broker uses per-subscriber buffered channels with drop-on-backpressure.
+
+```bash
+curl -N http://localhost:8080/events -H "Authorization: Bearer $MATRIX_DAEMON_TOKEN"
+```
+
+## Intents
+
+`GET /intents/{id}` returns the signed envelope chain for an intent — every lifecycle transition (drafting → … → completed/failed/cancelled), each an ed25519-signed envelope stored under `journal/<intent_id>/<seq>-<kind>.json`.
+
+<ResponseField name="id" type="string" required>
+  The intent ID (also its content-addressed hash root).
+</ResponseField>
+<ResponseField name="envelopes" type="array">
+  Ordered lifecycle envelopes, each with `seq`, `kind`, `body`, and `signature`.
+</ResponseField>
+
+<Card title="Executor internals" icon="gears" href="/developer/executor">
+  How the daemon walks plans and attests outcomes.
+</Card>

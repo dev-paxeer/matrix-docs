@@ -1,0 +1,62 @@
+---
+title: Neo Runtime
+description: "Neo's recursive tool-calling loop — the transcript-as-state design, two-model architecture, context budget and compaction, the recovery ladder, and how it escalates to MCL."
+---
+
+**Neo** is the default conversational agent. Package `matrix/neo/internal/agent` implements a recursive LLM tool-calling loop where **the conversation transcript IS the state**: the model emits text + tool-call intents, and the harness is the only effector. This is deliberately *not* the MCL compile→plan→execute machine — MCL is reached only through the `core_execute` tool for rigorous or monetary tasks.
+
+## Design decisions
+
+- **The transcript is the state.** No hidden state machine, no plan tree. The model sees the conversation (minus what was compacted) and decides what to do next.
+- **System block is re-derived every turn.** Identity + rules + retrieved memory + budget stat are rebuilt fresh each iteration, so they can never drift.
+- **Two-model architecture.** A main model (conversational, tool-calling) and a cheap model (compaction, validation, write-back). The cheap model falls back to the main model if unavailable.
+- **Context budget with thresholds.** Soft (80%) triggers cooperative compaction at a clean boundary; hard (92%) forces it immediately as a runaway backstop.
+- **No-progress stall detection.** Repeating the same tool-call batch without progress stops the loop after `NoProgressStall` repeats and returns an honest partial.
+
+## The chat loop
+
+<Steps>
+  <Step title="Page-fault memory">
+    `faultMemory` / `faultPatterns` / `recallTurns` pull relevant cortex records, proven procedural patterns, and past conversation turns (once per turn; refaulted every 6 steps against the latest narration).
+  </Step>
+  <Step title="Build system block">
+    `buildSystem` composes: static charter, embedded ground truth (`knowledge.md`), pinned block (DID + inviolable rules + hard constraints + user profile + active goal), consolidated summary, recalled turns, retrieved memory, procedural patterns, and a budget stat.
+  </Step>
+  <Step title="Budget check & call">
+    If usage ≥ hard threshold, compact now. Otherwise send the window (system + working transcript + tool schemas) to the main model.
+  </Step>
+  <Step title="Tool calls or finish">
+    No tool calls → termination check → final answer. Otherwise run each tool call via `dispatchWithRetry`, append results, and loop back.
+  </Step>
+</Steps>
+
+## Compaction
+
+When the window fills, older working history is swapped into a consolidated active-session summary (`GOAL / DECISIONS / ARTIFACTS / OPEN / LAST_RESULTS / NEXT`). A `validateSummary` pass checks that every high-entropy token (IDs, addresses, tx hashes) survived verbatim; dropped identifiers are re-appended under `ARTIFACTS (preserved verbatim):` — the trust contract. If summarization fails, the loop degrades to `safeTail` (transcript from the last user message onward).
+
+## Recovery ladder
+
+| Rung | Action | When |
+| --- | --- | --- |
+| 1 | Retry with backoff | Transient / invocation errors (`MaxRetriesPerTool`, default 3) |
+| 2 | Adapt approach | Bad args/approach — error as signal (`MaxAdaptAttempts`, default 2) |
+| 3 | Escalate to MCL | Money / rigor boundary → `core_execute` |
+| 4 | Surface honest partial | After ladder exhaustion or stall |
+
+## Reporter
+
+Neo never writes to a terminal directly — it speaks through a `Reporter`: `Say` (user-facing answer), `Status` (ephemeral progress), `Notice` (deliberate visible promise). The CLI maps these to stdout/stderr; the server maps all three to SSE event types.
+
+## Where to tune behavior
+
+| What to change | Where |
+| --- | --- |
+| System prompt text | `agent/prompt.go` — `systemPrompt()` |
+| Inviolable rules | `agent/prompt.go` — `invariantRules` |
+| Ground-truth facts | `agent/knowledge.md` (embedded in the binary) |
+| Compaction schema | `agent/compaction.go` |
+| Context thresholds / step budget | `config/config.go` — `SoftPct`, `HardPct`, `StepBudget` |
+
+<Card title="Core concepts" icon="lightbulb" href="/concepts">
+  How Neo relates to the MCL rigorous rail.
+</Card>

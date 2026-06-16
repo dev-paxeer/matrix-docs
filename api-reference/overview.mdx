@@ -1,0 +1,46 @@
+---
+title: API Overview
+description: "How Matrix HTTP surfaces are organized — the per-user daemon, the metered gateway, the router front door, and the agent-facing services (Chronos, Deus, LayerX, UWAC, Tachyon) — plus the shared auth patterns."
+---
+
+Matrix exposes several HTTP surfaces. Each is a distinct service with its own base path and auth model.
+
+## Services at a glance
+
+| Service | Base | Auth | Purpose |
+| --- | --- | --- | --- |
+| [Daemon](/api-reference/daemon) | `:8080` | Bearer (`MATRIX_DAEMON_TOKEN`) | Per-user chat + intent execution surface. |
+| [Gateway](/api-reference/gateway) | `/v1` | Bearer + PAX ledger | Metered, OpenAI-compatible LLM proxy. |
+| [Router](/api-reference/router) | `:443` | Supabase JWT | Public front door — wakes the user's daemon and reverse-proxies. |
+| [Chronos](/api-reference/chronos) | `/v1` | Agent DID | Scheduler / wake-up alarms. |
+| [Deus](/api-reference/deus) | `/v1` | Developer + caller auth | Agent-service marketplace, invoke, receipts. |
+| [LayerX](/api-reference/layerx) | `/v1` | Agent DID | Settlement: balances, pay, withdraw, settle. |
+| [UWAC](/api-reference/uwac) | `/v1` | Agent DID | OAuth-vault connectors → per-user MCP tools. |
+| [Tachyon](/api-reference/tachyon) | `/v1` | Bearer | Solidity/EVM compile, test, simulate, deploy. |
+
+## Common patterns
+
+### Agent DID authentication
+
+Chronos, LayerX, and UWAC share a challenge/verify handshake that binds a request to an agent's ed25519 DID:
+
+<Steps>
+  <Step title="Request a challenge">
+    `POST /v1/agent/auth/challenge` with the agent DID returns a nonce to sign.
+  </Step>
+  <Step title="Verify the signature">
+    `POST /v1/agent/auth/verify` with the signed nonce returns a session token used for subsequent calls.
+  </Step>
+</Steps>
+
+### Health and version
+
+Every service exposes `GET /healthz` (liveness; the daemon also returns SSE broker stats). The router additionally serves `GET /v/version`.
+
+### Idempotency
+
+Money-moving endpoints (e.g. Deus `POST /v1/invoke/{id}`) accept an `Idempotency-Key` header (or an `idempotency_key` body field) so retries are safe.
+
+<Card title="CLI reference" icon="terminal" href="/api-reference/cli">
+  The command-line surfaces: `mclc`, `mcl-execute`, `mcl-tools`, `deusctl`, `neo`.
+</Card>
