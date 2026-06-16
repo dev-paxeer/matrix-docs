@@ -1,0 +1,225 @@
+/* ==========================================================================
+   Matrix Docs — Cursor-inspired theme
+   Warm neutrals + vibrant orange accent + pill buttons + minimal shadows +
+   spring easing. Built on Jamdesk's documented CSS variables and component
+   data-attributes (see jamdesk.com/docs/customization/custom-css).
+
+   The real Cursor faces (CursorGothic, Berkeley Mono) are proprietary; this
+   uses the closest freely-available stand-ins (Inter, JetBrains Mono).
+   ========================================================================== */
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:ital,wght@0,400;0,500;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
+
+/* --------------------------------------------------------------------------
+   Design tokens
+   -------------------------------------------------------------------------- */
+:root {
+  /* Cursor accent — vibrant orange */
+  --cursor-orange: #f54e00;
+  --cursor-orange-bright: #ff6a2b;
+
+  /* Spring easing + durations (Cursor: fast 0.14s, slow 0.25s) */
+  --cursor-ease: cubic-bezier(0.25, 1, 0.5, 1);
+  --cursor-fast: 0.14s;
+  --cursor-slow: 0.25s;
+
+  /* Typography — warm neutral grotesque + premium mono stand-ins */
+  --font-family-sans: 'Inter', system-ui, -apple-system, sans-serif;
+  --font-family-mono: 'JetBrains Mono', 'Berkeley Mono', ui-monospace, SFMono-Regular, monospace;
+
+  /* Border radius scale (Cursor: 2px → 16px) */
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 14px;
+
+  /* Reading measure */
+  --content-max-width: 880px;
+
+  /* ---- Light mode: warm off-white, warm dark ink ---- */
+  --color-background: #f7f7f4;   /* warm off-white */
+  --color-text: #26251e;         /* warm dark */
+  --color-text-muted: #6f6d61;   /* warm muted */
+  --color-border: rgba(38, 37, 30, 0.10);
+  --color-code-bg: #f2f1ed;      /* card-01 */
+  --color-primary: var(--cursor-orange);
+  --color-primary-subtle: rgba(245, 78, 0, 0.08);
+
+  /* Warm card elevation levels (light) */
+  --cursor-card-01: #f2f1ed;
+  --cursor-card-02: #ecebe6;
+  --cursor-card-03: #e6e5df;
+}
+
+/* ---- Dark mode: warm near-black, warm light ink ---- */
+[data-theme="dark"] {
+  --color-background: #14120b;   /* warm near-black */
+  --color-text: #edecec;         /* warm light gray */
+  --color-text-muted: #a8a59a;   /* warm muted */
+  --color-border: rgba(237, 236, 236, 0.12);
+  --color-code-bg: #1b1913;      /* card-01 dark */
+  --color-primary: var(--cursor-orange-bright);
+  --color-primary-subtle: rgba(245, 78, 0, 0.16);
+
+  /* Warm card elevation levels (dark) */
+  --cursor-card-01: #1b1913;
+  --cursor-card-02: #211f17;
+  --cursor-card-03: #2b2923;
+}
+
+/* --------------------------------------------------------------------------
+   Base
+   -------------------------------------------------------------------------- */
+html, body {
+  background-color: var(--color-background);
+  color: var(--color-text);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  font-family: var(--font-family-sans);
+}
+
+/* Tight, confident headings (Cursor uses negative tracking) */
+.content h1, .content h2, .content h3, .content h4 {
+  font-family: var(--font-family-sans);
+  letter-spacing: -0.021em;
+  font-weight: 700;
+}
+.content h1 { letter-spacing: -0.03em; }
+
+.content h2 { margin-top: 3rem; margin-bottom: 1rem; }
+.content h3 { margin-top: 2rem; margin-bottom: 0.75rem; }
+
+code, pre, kbd, [data-component="code-block"] {
+  font-family: var(--font-family-mono);
+}
+pre code { font-variant-ligatures: common-ligatures; }
+
+/* --------------------------------------------------------------------------
+   Links — orange accent, offset underline
+   -------------------------------------------------------------------------- */
+.content a:not([class]) {
+  color: var(--color-primary);
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+  transition: text-decoration-thickness var(--cursor-fast) var(--cursor-ease),
+              color var(--cursor-fast) var(--cursor-ease);
+}
+.content a:not([class]):hover {
+  text-decoration-thickness: 2px;
+}
+
+/* --------------------------------------------------------------------------
+   Cards — warm elevated surface, generous radius, layering by tone (not
+   heavy strokes), subtle hover lift via spring easing
+   -------------------------------------------------------------------------- */
+[data-component="card"] {
+  background-color: var(--cursor-card-01) !important;
+  border: 1px solid var(--color-border) !important;
+  border-radius: var(--radius-lg) !important;
+  box-shadow: none !important;
+  transition: background-color var(--cursor-fast) var(--cursor-ease),
+              transform var(--cursor-fast) var(--cursor-ease),
+              border-color var(--cursor-fast) var(--cursor-ease);
+}
+[data-component="card"]:hover {
+  background-color: var(--cursor-card-02) !important;
+  border-color: var(--color-primary-subtle) !important;
+}
+
+/* --------------------------------------------------------------------------
+   Code blocks — warm surface, medium radius
+   -------------------------------------------------------------------------- */
+[data-component="code-block"], pre {
+  background-color: var(--color-code-bg) !important;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md) !important;
+}
+:not(pre) > code {
+  background-color: var(--color-code-bg);
+  border-radius: var(--radius-sm);
+  padding: 0.15em 0.4em;
+  font-size: 0.875em;
+}
+
+/* --------------------------------------------------------------------------
+   Buttons — pill-shaped (Cursor: effectively infinite radius), primary uses
+   foreground/background inversion, spring transitions. Selectors are
+   best-effort across the navbar button + MDX button-like elements.
+   -------------------------------------------------------------------------- */
+button,
+a[role="button"],
+[data-component="button"],
+.btn,
+button[class*="primary"],
+a[class*="button"] {
+  border-radius: 9999px !important;
+  transition: background-color var(--cursor-fast) var(--cursor-ease),
+              color var(--cursor-fast) var(--cursor-ease),
+              transform var(--cursor-fast) var(--cursor-ease),
+              opacity var(--cursor-fast) var(--cursor-ease) !important;
+}
+button:active,
+a[role="button"]:active,
+[data-component="button"]:active {
+  transform: scale(0.98);
+}
+
+/* Primary/CTA button: foreground bg, background text (Cursor inversion) */
+[data-component="button"][data-variant="primary"],
+button[class*="primary"],
+.navbar button,
+.navbar a[class*="button"] {
+  background-color: var(--color-primary) !important;
+  color: #ffffff !important;
+  padding: 0.62rem 1.25rem 0.64rem !important;
+  font-weight: 600;
+}
+[data-component="button"][data-variant="primary"]:hover,
+button[class*="primary"]:hover,
+.navbar button:hover {
+  opacity: 0.92;
+}
+
+/* --------------------------------------------------------------------------
+   Callouts — accent the Note/Tip with the warm primary tint
+   -------------------------------------------------------------------------- */
+[data-callout="note"],
+[data-callout="tip"],
+[data-callout="info"] {
+  border-left-width: 3px;
+  border-radius: var(--radius-md);
+  background: var(--color-primary-subtle);
+}
+
+/* --------------------------------------------------------------------------
+   Tabs — active tab gets an orange indicator
+   -------------------------------------------------------------------------- */
+[data-component="tabs"] [data-state="active"] {
+  border-bottom-width: 2px;
+  border-bottom-color: var(--color-primary);
+  color: var(--color-primary);
+}
+
+/* --------------------------------------------------------------------------
+   Header — subtle backdrop blur (Cursor uses an 8/12/16px scale)
+   -------------------------------------------------------------------------- */
+header, [data-component="header"], [data-component="navbar"] {
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--color-border);
+}
+
+/* --------------------------------------------------------------------------
+   Selection — warm orange highlight
+   -------------------------------------------------------------------------- */
+::selection {
+  background: rgba(245, 78, 0, 0.22);
+}
+
+/* --------------------------------------------------------------------------
+   Responsive
+   -------------------------------------------------------------------------- */
+@media (max-width: 768px) {
+  :root { --content-max-width: 100%; }
+  .content h1 { font-size: 1.9rem; }
+}

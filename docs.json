@@ -3,9 +3,12 @@
   "name": "Matrix",
   "theme": "jam",
   "colors": {
-    "primary": "#004CED",
-    "light": "#2D6BFF",
-    "dark": "#0033A8"
+    "primary": "#F54E00",
+    "light": "#FF7A45",
+    "dark": "#D44400"
+  },
+  "appearance": {
+    "default": "dark"
   },
   "api": {
     "openapi": [
@@ -24,6 +27,11 @@
         "php"
       ]
     }
+  },
+  "logo": {
+    "light": "logo/wordmark.png",
+    "dark": "logo/wordmark_light.png",
+    "href": "https://docs.matrixmcl.com"
   },
   "navbar": {
     "primary": {
