@@ -29,8 +29,8 @@
     }
   },
   "logo": {
-    "light": "logo/wordmark.png",
-    "dark": "logo/wordmark_light.png",
+    "light": "logo/wordmark_light.png",
+    "dark": "logo/wordmark.png",
     "href": "https://docs.matrixmcl.com"
   },
   "navbar": {

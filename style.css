@@ -58,6 +58,13 @@ html, body {
   -moz-osx-font-smoothing: grayscale;
 }
 
+/* Logo: the wordmark PNGs ship with solid (non-transparent) backgrounds —
+   white box for the light variant, black box for the dark variant. Blend the
+   box out so the mark sits flush on the surface instead of in a chip.
+   (For a perfect result, replace the PNGs with transparent versions.) */
+[data-theme="dark"] img[src*="wordmark"] { mix-blend-mode: screen; }
+[data-theme="light"] img[src*="wordmark"] { mix-blend-mode: multiply; }
+
 /* Tight, confident headings (Cursor uses negative tracking) */
 .content h1, .content h2, .content h3, .content h4 {
   letter-spacing: -0.02em;
