@@ -1,0 +1,85 @@
+---
+title: Core Concepts
+description: "The mental model behind Matrix — intents and frames, the closed verb and object vocabularies, cortex memory, skills, envelopes, attestation, and the replay invariant."
+---
+
+Matrix is built around a small set of load-bearing ideas. Understanding these makes the rest of the docs click into place.
+
+## The two rails
+
+Every request enters through one of two rails over the same memory + execution substrate:
+
+<Columns cols={2}>
+  <Card title="Neo (conversational)" icon="comments">
+    A tool-calling loop with paged cortex memory. Permissive on reversible work; delegates monetary or irreversible work to the MCL rail.
+  </Card>
+  <Card title="MCL (rigorous)" icon="diagram-project">
+    Compiles prose into a typed, signed Intent IR, synthesizes a plan, and walks it deterministically. Used for high-stakes and on-chain work.
+  </Card>
+</Columns>
+
+## Intent IR and the Frame
+
+The **Intent IR** is the typed artifact the MCL compiler produces from prose. The user reviews and signs it before anything executes — prose is display-only, the **Frame** is the source of truth.
+
+A Frame carries:
+
+- `verb` — one closed verb (see below)
+- `objects` — typed slot entries (`name`, `value`, `uri`, `type`)
+- `constraints` — typed limits (budget, allow/deny, policy, schema…)
+- `success_criteria` — typed predicates
+- `preferences` — ranked soft preferences
+
+The Intent also carries `unknowns` (structured gaps), `confidence`, an optional `budget`, a self-`hash` for content addressing, and `CompileMetadata` (the D11 compilation trace: seed, mtx digest, model digest, grammar, skill id, cortex snapshot hash).
+
+## Closed vocabularies
+
+Matrix deliberately closes its vocabularies so intent survives multi-step execution.
+
+<Columns cols={2}>
+  <Card title="10 verbs (D7)" icon="list-check">
+    `find` · `acquire` · `build` · `modify` · `deliver` · `analyze` · `negotiate` · `schedule` · `monitor` · `delegate`. Extension verbs use an `x:` prefix.
+  </Card>
+  <Card title="8 object kinds" icon="shapes">
+    `service` · `model` · `agent` · `knowledge` · `intent` · `asset` · `plan` · `capability`.
+  </Card>
+</Columns>
+
+## Skills
+
+A **skill** is a capability manifest authored in MatrixScript (`SKILL.mtx`) with a prose body (`SKILL.md`). Its `§PROCEDURE` declares `on verb=…` blocks that drive compilation: prompts, cortex resolutions, unknowns, and clarify questions. The compiler hashes the AST canonically (comments and whitespace do not affect the digest), so skills are reformat-safe and content-addressed.
+
+## Cortex
+
+**Cortex** is the per-actor typed memory graph, stored one Pebble DB per actor. It is authoritative and byte-deterministic:
+
+- An append-only **journal** records every mutation as canonical CBOR (monotonic, gap-free `seq`).
+- A **9-type memory taxonomy** with deterministic rendering forms (`short` / `medium` / `full`).
+- **Salience** scoring (5-factor cold score + EMA weight learner) ranks recall.
+- **Embeddings + a pure-Go HNSW vector index** power semantic `Find`.
+- **Snapshots** are Merkle-anchored (MMR + SMT-256) with an `OverallRoot`.
+
+## Envelopes and attestation
+
+Each lifecycle transition is recorded as a signed **envelope** (ed25519, canonical CBOR, written as JSON on disk under `journal/<intent_id>/<seq>-<kind>.json`). On a terminal state, `cortex.Attest` writes `KindAttest` + `KindLearnWeights` in one atomic batch, and the EMA learner pulls per-actor salience weights toward (or away from) the cited memories.
+
+## The replay invariant
+
+The defining correctness property: derived state can always be rebuilt byte-identically from the journal.
+
+<Note>
+`DropDerived` removes every derived index, then the rebuilder walks heads, edges, and journal entries in order and re-emits them. `OverallRoot()` before and after **must be identical**. Any drift is a bug — this is enforced on every PR by the `replay-invariant` CI job.
+</Note>
+
+## Hosting model
+
+In production each user gets their own daemon on a Fly Machine (auto-suspended when idle), fronted by `router` (JWT verify → wake → reverse-proxy). LLM calls flow through the metered `gateway`, which debits a per-user PAX credit ledger against a versioned rate card.
+
+<Columns cols={2}>
+  <Card title="Glossary" icon="book" href="/glossary">
+    Quick definitions for every term used above.
+  </Card>
+  <Card title="MCL & skill authoring" icon="diagram-project" href="/developer/mcl">
+    Write skills and understand the compiler pipeline.
+  </Card>
+</Columns>

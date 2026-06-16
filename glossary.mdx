@@ -1,0 +1,56 @@
+---
+title: Glossary
+description: "Definitions for the core Matrix terms — rails, intents, frames, cortex, skills, envelopes, attestation, MCP, PAX, and the deployment surfaces."
+---
+
+A quick reference for the vocabulary used throughout these docs.
+
+## Core protocol
+
+| Term | Definition |
+| --- | --- |
+| **MCL** | Matrix Communication Layer. The compiler/protocol turning natural language into a typed Intent IR. |
+| **Intent IR** | The typed, signed artifact the MCL compiler produces. The executor consumes this, never raw prose. |
+| **Frame** | The typed source-of-truth inside an Intent: `verb`, `objects`, `constraints`, `success_criteria`, `preferences`. |
+| **Verb (D7)** | One of the 10 closed verbs: find, acquire, build, modify, deliver, analyze, negotiate, schedule, monitor, delegate. |
+| **Object kind** | One of the 8 closed kinds: service, model, agent, knowledge, intent, asset, plan, capability. |
+| **PlanTree** | The executable tree synthesized from an Intent: sequential / parallel / step / tool_call / sub_dispatch / gate nodes. |
+| **Unknown** | A structured gap in a Frame, marked `blocking`, `preferred`, or `optional`. |
+| **CompileMetadata** | The D11 compilation trace: seed, mtx digest, model digest, grammar, skill id/version, cortex snapshot hash. |
+
+## Memory
+
+| Term | Definition |
+| --- | --- |
+| **cortex** | The per-actor typed memory graph on Pebble. Authoritative and byte-deterministic. |
+| **Journal** | The append-only write log (canonical CBOR), with monotonic gap-free `seq`. |
+| **Salience** | The 5-factor cold score plus EMA weight learner used to rank recall. |
+| **Snapshot** | A Merkle-anchored capture (MMR + SMT-256) of cortex state, summarized by an `OverallRoot`. |
+| **OverallRoot** | The single hash committing all cortex state; used to verify the replay invariant. |
+| **Replay invariant (§13.4)** | Dropping derived state and rebuilding from the journal must yield a byte-identical `OverallRoot`. |
+| **Attest** | `cortex.Attest` — writes `KindAttest` + `KindLearnWeights` atomically on a terminal lifecycle state. |
+
+## Agents and tools
+
+| Term | Definition |
+| --- | --- |
+| **Neo** | The default conversational tool-calling agent. Reversible work only; delegates the rest to MCL. |
+| **Skill** | A capability manifest: `SKILL.mtx` (MatrixScript) + `SKILL.md` (prose body). |
+| **Agent manifest** | A DID-bound JSON file (`agents/*.json`) declaring the MCP tool servers an agent may use. |
+| **MCP** | Model Context Protocol. JSON-RPC tool servers the agents call (stdio or streamable-HTTP). |
+| **Envelope** | A signed (ed25519) lifecycle record written as JSON under `journal/<intent_id>/`. |
+| **Liaison** | The user-facing narrator that turns pipeline events into natural-language chat turns. A pure observability side-channel. |
+| **DID** | Decentralized identifier (`did:matrix:<label>:<keyfp>`) binding an actor to its ed25519 key. |
+
+## Hosting and economy
+
+| Term | Definition |
+| --- | --- |
+| **router** | The front door: verifies a JWT, wakes the user's Fly Machine, and reverse-proxies to it. |
+| **gateway** | The metered LLM proxy. Debits a PAX credit ledger against a versioned rate card. |
+| **PAX** | The Paxeer Network unit used to price LLM usage in the credit ledger. |
+| **deus** | The agent-service marketplace: registry, discovery, metered invoke, EIP-712 receipts, hosting. |
+| **layerx** | The settlement fabric and custody spine for agent balances. |
+| **chronos** | The centralized agent scheduler / wake-up system. |
+| **tachyon** | The agent-native Solidity/EVM engine: compile, test, simulate, deploy. |
+| **uwac** | Universal Web Agent Connector — an OAuth vault that exposes per-user MCP tools. |

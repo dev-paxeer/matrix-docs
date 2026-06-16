@@ -1,11 +1,11 @@
 {
   "$schema": "https://jamdesk.com/docs.json",
-  "name": "Documentation",
+  "name": "Matrix",
   "theme": "jam",
   "colors": {
-    "primary": "#635BFF",
-    "light": "#7C75FF",
-    "dark": "#4F46E5"
+    "primary": "#004CED",
+    "light": "#2D6BFF",
+    "dark": "#0033A8"
   },
   "api": {
     "openapi": [
@@ -35,7 +35,7 @@
   "navigation": {
     "tabs": [
       {
-        "tab": "Docs",
+        "tab": "Documentation",
         "icon": "book-open",
         "groups": [
           {
@@ -43,43 +43,9 @@
             "icon": "rocket",
             "pages": [
               "introduction",
-              "quickstart"
-            ]
-          },
-          {
-            "group": "Writing Content",
-            "icon": "pen",
-            "pages": [
-              "writing/pages",
-              "writing/components",
-              "writing/code-blocks"
-            ]
-          },
-          {
-            "group": "API Pages",
-            "icon": "plug",
-            "pages": [
-              {
-                "page": "api-reference/openapi-example",
-                "title": "OpenAPI Example"
-              },
-              "api-reference/request-response-examples"
-            ]
-          }
-        ]
-      },
-      {
-        "tab": "Components",
-        "icon": "puzzle-piece",
-        "groups": [
-          {
-            "group": "Built-In Components",
-            "icon": "puzzle-piece",
-            "pages": [
-              "components/cards",
-              "components/callouts",
-              "components/tabs-and-accordions",
-              "components/steps"
+              "quickstart",
+              "concepts",
+              "glossary"
             ]
           }
         ]

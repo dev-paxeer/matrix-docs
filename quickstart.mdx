@@ -1,109 +1,113 @@
 ---
 title: Quickstart
-description: "Edit MDX files, preview locally with the Jamdesk CLI, then connect a GitHub repo for automatic deploys. Customize colors, branding, and navigation in docs.json."
+description: "Clone matrix-core, build the nine Go modules, compile your first intent, drive an end-to-end walk, and run the per-user daemon."
 ---
 
-Your docs are built from MDX files in this repository. Edit them locally with the CLI, then connect to Jamdesk for automatic builds on every push.
+This guide takes you from a fresh clone to a running daemon. Matrix is a polyglot monorepo of independently buildable Go modules plus MCP tool servers.
 
-## 1. Preview locally
+## Prerequisites
 
-Install the Jamdesk CLI:
+<Columns cols={2}>
+  <Card title="Go 1.22+" icon="golang">
+    The toolchain is pinned across every module.
+  </Card>
+  <Card title="GNU make 4.x" icon="hammer">
+    The root `Makefile` drives all module builds and tests.
+  </Card>
+  <Card title="Node 20+, npx, Python 3.11+, uv" icon="boxes-stacked">
+    Required for the MCP-server-driven flows (filesystem, fetch, git, browser, …).
+  </Card>
+  <Card title="Docker + buildx" icon="docker">
+    Only needed to build the per-user daemon image.
+  </Card>
+</Columns>
 
-<CodeGroup>
-```bash npm
-npm install -g jamdesk
-```
-
-```bash brew
-brew install jamdesk/tap/jamdesk
-```
-</CodeGroup>
-
-Start the dev server with hot reload:
+## 1. Clone and build
 
 ```bash
-jamdesk dev
+git clone https://github.com/paxlabs-inc/matrix-core.git
+cd matrix-core
+make build      # compile all nine Go modules
+make install    # drop the runnable CLIs into ./bin
+make test       # go test -count=1 -race ./... per module
+make ci         # gofmt-check + vet + tests (mirrors GitHub Actions)
 ```
-
-Open [http://localhost:3000](http://localhost:3000). Edits to MDX files appear instantly.
-
-## 2. Edit a page
-
-Open any `.mdx` file and start writing. MDX supports standard Markdown plus Jamdesk components.
-
-```mdx
----
-title: My Page
-description: A brief description for SEO
----
-
-# Heading
-
-Regular markdown works — **bold**, *italic*, `code`, [links](https://example.com).
 
 <Tip>
-Jamdesk components like this Tip drop in without imports.
+Need `golangci-lint` locally? Run `make lint-install` (pinned to v1.61.0) then `make lint`.
 </Tip>
+
+## 2. Configure secrets
+
+```bash
+cp .env.example .env
+# FIREWORKS_API_KEY / TOGETHER_API_KEY — required for any non-dry-run compile
+# MATRIX_DAEMON_TOKEN — set if running the daemon with auth
 ```
 
-## 3. Add a new page
+`.env` is gitignored; `.env.example` documents every variable Matrix reads.
+
+## 3. Compile your first intent
+
+```bash
+./bin/mclc compile \
+  -skill skills/writing-plans/SKILL.mtx \
+  -prose "Build a deployment pipeline for my Node.js app" \
+  -verb  build
+```
+
+With `FIREWORKS_API_KEY` set the compiler emits a real Intent Frame (verb, typed objects, blocking unknowns). Without keys it falls back to dry-run mode and prints the fully-interpolated prompt structure.
+
+## 4. Drive an end-to-end walk
+
+```bash
+./bin/mcl-execute walk \
+  -prose       "Summarise the README and write it to /tmp/summary.md" \
+  -manifest    agents/default.json \
+  -cortex-root ./runs/dev-cortex \
+  -skills-root ./skills
+```
+
+This loads the agent manifest, spawns the MCP servers it declares, compiles the prose into an Intent + PlanTree, walks the plan, journals every step as a cortex Event, and ends with `cortex.Attest` writing `KindAttest` + `KindLearnWeights` atomically.
+
+## 5. Run the daemon
 
 <Steps>
-  <Step title="Create an MDX file">
-    Add a new `.mdx` file anywhere in your project, for example `guides/deployment.mdx`.
-  </Step>
-  <Step title="Add it to navigation">
-    Open `docs.json` and add the page path to the `navigation` section:
-
-    ```json
-    {
-      "group": "Guides",
-      "pages": ["guides/deployment"]
-    }
+  <Step title="Start the per-user daemon">
+    ```bash
+    ./bin/mcl-execute daemon \
+      -addr        :8080 \
+      -cortex-root ./runs/dev-cortex \
+      -manifest    agents/default.json \
+      -skills-root ./skills
     ```
   </Step>
-</Steps>
+  <Step title="Talk to it">
+    The daemon exposes an HTTP + SSE surface. The most common routes:
 
-## 4. Customize your site
-
-Everything is configured in `docs.json`:
-
-| Setting | What it does |
-|---------|-------------|
-| `name` | Site name shown in the header |
-| `colors` | Primary, light, and dark accent colors |
-| `logo` | Light and dark mode logo images |
-| `theme` | Visual theme (`jam`, `nebula`, or `pulsar`) |
-| `navigation` | Sidebar tabs, groups, and page order |
-| `navbar` | Top navigation links and buttons |
-
-<Tip>
-See the full configuration reference at [jamdesk.com/docs/config/docs-json-reference](https://jamdesk.com/docs/config/docs-json-reference).
-</Tip>
-
-## 5. Connect GitHub for auto-deploy
-
-Once your docs look right locally, hand off building and hosting to Jamdesk:
-
-<Steps>
-  <Step title="Push your code to GitHub">
-    Create a repository and push your project.
-  </Step>
-  <Step title="Connect on the dashboard">
-    Sign in at [dashboard.jamdesk.com](https://dashboard.jamdesk.com), create a project, and connect your repository.
-  </Step>
-  <Step title="Push changes">
-    Every push triggers an automatic build. Your site is live in seconds at `<slug>.jamdesk.app` or your custom domain.
+    | Method | Path | Purpose |
+    | --- | --- | --- |
+    | GET | `/healthz` | Liveness + SSE broker stats |
+    | POST | `/chat` | Converse with the agent (Neo front door) |
+    | GET | `/events` | Server-Sent Events tail (transcript) |
+    | POST | `/messages` | Submit a prose message (rigorous rail) |
+    | GET | `/intents/{id}` | Read the intent envelope chain by ID |
+    | GET | `/me` | Per-user settings + identity |
+    | POST | `/shutdown` | Graceful drain |
   </Step>
 </Steps>
+
+<Note>
+The full route reference, request/response shapes, and per-service APIs live under [API Reference](/api-reference/daemon).
+</Note>
 
 ## What's next
 
 <Columns cols={2}>
-  <Card title="Components" icon="puzzle-piece" href="/components/cards">
-    Cards, callouts, tabs, steps, and more — all ready to use.
+  <Card title="Core concepts" icon="lightbulb" href="/concepts">
+    The mental model behind intents, plans, cortex, and replay.
   </Card>
-  <Card title="API Pages" icon="plug" href="/api-reference/openapi-example">
-    Render endpoint pages from an OpenAPI spec, or hand-author with components.
+  <Card title="Architecture" icon="sitemap" href="/developer/architecture">
+    Module boundaries, cross-cutting flows, and invariants.
   </Card>
 </Columns>

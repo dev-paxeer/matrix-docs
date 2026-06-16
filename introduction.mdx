@@ -1,49 +1,56 @@
 ---
 title: Introduction
-description: "Starter project with example pages, components, and API reference. Edit MDX, customize your theme, and ship docs in minutes — preview locally or auto-deploy from GitHub."
+description: "Matrix is the cognition and UX layer on Paxeer Network — it turns natural language into typed, inspectable, replayable agent execution across two rails: Neo and the MCL pipeline."
 ---
 
-Welcome to your Jamdesk starter project. Everything you need to ship a polished documentation site is in this repo — edit the MDX files, tweak `docs.json`, and you're live.
+**Matrix** is the cognition and UX layer on top of [Paxeer Network](https://paxeer.app). It turns natural-language requests from non-developers into a typed, inspectable, correctable **Intent IR** that an agent can actually execute — without the classic failure modes (prompt fragility, intent loss, no shared ontology, no structured correction) that break human ↔ agent workflows today.
 
 <Tip>
-**Built-in AI search.** Click the sparkles button in the top-right corner of the header — chat is grounded on this site's pages and works out of the box.
+New here? Read this page for the mental model, then jump to the [Quickstart](/quickstart) to compile your first intent and drive an end-to-end walk.
 </Tip>
 
-## What's included
+## Two rails, one substrate
+
+Matrix ships two agent rails over one shared memory + execution substrate. The conversational rail handles everyday reversible work; the rigorous rail handles anything monetary or irreversible.
 
 <Columns cols={2}>
-  <Card title="Ready-made pages" icon="file-lines">
-    Example pages for getting started, writing content, and API references.
+  <Card title="Neo — conversational rail" icon="comments">
+    The default tool-calling agent: familiar, robust, fully permissive on reversible work (shell, code, fetch, web). Delegates monetary/irreversible work to MCL.
   </Card>
-  <Card title="50+ components" icon="puzzle-piece" href="/components/cards">
-    Cards, callouts, tabs, steps, code groups, accordions — no imports needed.
-  </Card>
-  <Card title="OpenAPI rendering" icon="plug" href="/api-reference/openapi-example">
-    Auto-generate endpoint pages from a YAML or JSON spec.
-  </Card>
-  <Card title="Auto-deploy" icon="rocket">
-    Push to GitHub and your docs build and deploy in seconds.
+  <Card title="MCL — rigorous rail" icon="diagram-project">
+    Natural language → typed Intent IR → plan → replayable walk. For high-stakes, on-chain, or irreversible work where determinism matters.
   </Card>
 </Columns>
 
-## A minimal Jamdesk project
+## The stack
 
-```text
-my-docs/
-├── docs.json          # Site config: theme, colors, navigation
-├── introduction.mdx   # This page
-└── quickstart.mdx     # Your getting-started guide
-```
+| Layer | Role |
+| --- | --- |
+| **MCL** | Protocol turning NL → typed Intent IR. Closed verb vocab (10), closed object kinds (8). |
+| **cortex** | Per-actor typed memory graph on Pebble. Append-only journal, Merkle-anchored snapshots, byte-deterministic replay. |
+| **bridge** | Adapter wiring the MCL compiler's `Cortex` interface to a live cortex instance. |
+| **executor** | Plan walker, lifecycle machine, MCP tool dispatch, per-user daemon, Liaison narrator, e2e harness. |
+| **neo** | The default conversational agent — tool-calling loop with paged cortex memory. |
+| **gateway** | Metered LLM proxy + PAX credit ledger (free-tier whitelist + rate card). |
+| **router** | Per-user Fly Machine provisioning + wake-then-reverse-proxy front door. |
+| **deus** | Agent-service marketplace: registry, discovery, metered invoke, EIP-712 receipts, hosting. |
+| **layerx** | Settlement fabric and custody spine for agent balances. |
+| **uwac** | Universal Web Agent Connector — OAuth vault → per-user MCP tools. |
+| **tachyon** | Agent-native Solidity/EVM engine — compile / test / simulate / deploy. |
 
-That's all you need. Add more `.mdx` files to add more pages — the file path becomes the URL.
-
-## Next steps
+## Where to go next
 
 <Columns cols={2}>
   <Card title="Quickstart" icon="play" href="/quickstart">
-    Edit pages locally, customize, and deploy.
+    Build the modules, compile an intent, walk a plan, run the daemon.
   </Card>
-  <Card title="Components" icon="puzzle-piece" href="/components/cards">
-    Browse every built-in component with live examples.
+  <Card title="Core concepts" icon="lightbulb" href="/concepts">
+    Intents, frames, verbs, skills, cortex, envelopes, attestation, and replay.
+  </Card>
+  <Card title="Glossary" icon="book" href="/glossary">
+    Every Matrix term in one place.
+  </Card>
+  <Card title="Architecture" icon="sitemap" href="/developer/architecture">
+    The layered model, cross-cutting flows, and load-bearing invariants.
   </Card>
 </Columns>
