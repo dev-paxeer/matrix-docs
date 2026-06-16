@@ -1,0 +1,68 @@
+---
+title: CLI Reference
+description: "The Matrix command-line surfaces — mclc, mcl-execute, mcl-tools, mcl-validate, cortex-shell, deusctl, and neo — and what each subcommand does."
+---
+
+Matrix ships several CLIs built by `make install` into `./bin`. They share flags like `-cortex-root`, `-manifest`, and `-skills-root`.
+
+## `mclc` — the compiler
+
+| Subcommand | Purpose |
+| --- | --- |
+| `compile` | Compile prose + a skill + a verb into an Intent Frame. |
+| `validate` | Strict validation of a `SKILL.mtx`. |
+| `hash` | Compute the canonical AST digest. |
+| `parse` | Parse and dump the AST. |
+
+```bash
+./bin/mclc compile -skill skills/writing-plans/SKILL.mtx \
+  -prose "Build a deployment pipeline" -verb build [-dry-run]
+```
+
+## `mcl-execute` — the runtime
+
+| Subcommand | Purpose |
+| --- | --- |
+| `walk` | Compile an intent, synthesize a PlanTree, and walk it to completion. |
+| `classify` | Run the materiality classifier on an intent. |
+| `loader` | Load and inspect an agent manifest + its skills. |
+| `daemon` | Run the per-user HTTP + SSE daemon. |
+
+```bash
+./bin/mcl-execute walk -prose "Summarise the README" \
+  -manifest agents/default.json -cortex-root ./runs/dev-cortex -skills-root ./skills
+```
+
+## `mcl-tools` — MCP tool inspection
+
+| Subcommand | Purpose |
+| --- | --- |
+| `verify` | Verify a manifest's tool bijection (declared == discovered). |
+| `list` | List tools exposed by the manifest's MCP servers. |
+| `describe` | Show a tool's schema. |
+| `call` | Invoke a tool directly. |
+
+## `mcl-validate`
+
+Validates a single `SKILL.mtx`. The `mtx-corpus` CI job runs this across the whole corpus on every PR.
+
+```bash
+./bin/mcl-validate skills/<slug>/SKILL.mtx
+```
+
+## `cortex-shell`
+
+Inspect and maintain a cortex store. The load-bearing command is the replay verifier:
+
+```bash
+cortex-shell rebuild -verify-only   # drop derived, rebuild, assert byte-identical OverallRoot
+```
+
+## `deusctl` & `neo`
+
+- **`deusctl`** — operate the Deus marketplace control plane (register/publish services, manage deployments).
+- **`neo`** — run the Neo conversational agent locally (CLI reporter → stdout/stderr).
+
+<Card title="MCL & skill authoring" icon="diagram-project" href="/developer/mcl">
+  Author the skills these CLIs compile.
+</Card>

@@ -1,0 +1,24 @@
+---
+title: Using Skills
+description: "What skills are from a user's perspective — packaged capabilities the agent draws on, how they shape clarifying questions, and how correction works."
+---
+
+A **skill** is a packaged capability — a recipe that tells Matrix how to handle a class of request (writing a plan, reviewing code, deploying a contract). You don't invoke skills directly; the agent selects the right one based on what you ask.
+
+## How skills shape the conversation
+
+- **Clarifying questions.** A skill knows what it needs. If a required detail is missing, Matrix asks one focused question rather than guessing.
+- **Typed structure.** Skills extract a typed plan from your prose, so your intent survives multi-step execution instead of drifting.
+- **Honest gaps.** If something is genuinely unknown, Matrix marks it as a blocking gap and tells you, instead of inventing an answer.
+
+## Correcting the agent
+
+Because the plan is typed and inspectable, you can correct it structurally — adjust a constraint, change a target, raise a budget — without rewriting your whole request from scratch.
+
+<Tip>
+You can ask Matrix what it's about to do before it does anything irreversible. The rigorous rail always produces a reviewable plan for monetary or on-chain work.
+</Tip>
+
+<Card title="Core concepts" icon="lightbulb" href="/concepts">
+  The ideas behind skills, intents, and plans.
+</Card>

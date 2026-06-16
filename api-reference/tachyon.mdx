@@ -1,0 +1,47 @@
+---
+title: Tachyon API
+description: "The agent-native Solidity/EVM engine — compile, test, simulate, deploy, and call contracts; manage chains and artifacts; plus a JSON-RPC endpoint and MCP surface."
+---
+
+**Tachyon** is the agent-native Solidity/EVM engine. It exposes its compile/test/simulate/deploy workflow as API, RPC, and MCP surfaces rather than a human-first terminal flow.
+
+## Routes
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| GET | `/healthz` | Liveness. |
+| GET | `/` | Service root / info. |
+| POST | `/rpc` | JSON-RPC endpoint (MCP-style tool calls). |
+| POST | `/v1/compile` | Compile Solidity sources. |
+| POST | `/v1/test` | Run the test suite. |
+| POST | `/v1/simulate` | Simulate a transaction. |
+| POST | `/v1/deploy` | Deploy a contract. |
+| POST | `/v1/call` | Call a contract method. |
+| GET | `/v1/chains` | List configured chains. |
+| POST | `/v1/chains` | Add a chain. |
+| POST | `/v1/chains/use` | Select the active chain. |
+| GET | `/v1/artifacts/{name}` | Fetch a build artifact. |
+| GET | `/v1/registry/deployments` | List recorded deployments. |
+
+## Compile
+
+<ParamField body="sources" type="object" required>
+  Map of filename → Solidity source.
+</ParamField>
+
+<RequestExample>
+```bash cURL
+curl -X POST https://tachyon.example/v1/compile \
+  -H "Authorization: Bearer $TACHYON_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"sources": {"Counter.sol": "// SPDX-License-Identifier: MIT\npragma solidity ^0.8.0;\ncontract Counter { uint256 public n; }"}}'
+```
+</RequestExample>
+
+<ResponseField name="artifacts" type="object">
+  Compiled ABI + bytecode per contract; fetch by name at `/v1/artifacts/{name}`.
+</ResponseField>
+
+<Card title="MCP surface" icon="plug" href="/mcp/tool-servers">
+  How Tachyon is exposed to agents as MCP tools.
+</Card>

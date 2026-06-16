@@ -1,0 +1,44 @@
+---
+title: Tool-Server Catalog
+description: "The MCP servers the default Matrix agent ships with — filesystem, fetch, web-search, browser, tachyon, deus, chronos, git, exec, media, paxeer-net, and uwac — and what each provides."
+---
+
+The default agent (`agents/default.json`) bundles twelve MCP servers. Tools resolve as `matrix://tool/mcp/<alias>/<tool>@<version>`.
+
+## Default servers
+
+| Alias | Transport | Provides |
+| --- | --- | --- |
+| `fs` | stdio (`npx` filesystem) | Read/write files, list/search, directory trees, move, stat (read + write side effects). |
+| `fetch` | stdio (`uvx` fetch) | Fetch a URL and return Markdown (network). |
+| `web-search` | stdio (`node`) | `web_search` and `web_news` over the public web (network). |
+| `browser` | stdio (`node`) | Playwright-driven browser automation. |
+| `tachyon` | stdio (`node`) | Solidity/EVM compile, test, simulate, deploy, call. |
+| `deus` | stdio (`node`) | Marketplace discovery + metered service invoke. |
+| `chronos` | stdio (`node`) | Schedule and manage wake-up alarms. |
+| `git` | stdio (`uvx` git) | Repository operations over the workspace. |
+| `exec` | stdio (`node`) | Sandboxed shell execution (shell). |
+| `media` | stdio (`node`) | Media generation / handling. |
+| `paxeer-net` | stdio (`node`) | The public Paxeer chain surface — RPC, PaxScan, Argus, price, agent-economy precompiles, embedded-wallet writes. |
+| `uwac` | stdio (`node`) | Per-user external-app connectors via the OAuth vault. |
+
+## paxeer-net: chain access
+
+`paxeer-net` exposes the Paxeer chain (Chain ID 125). Reads need no auth; chain **writes** sign through the Paxeer Embedded Wallet (custody network-side, spend-policy enforced at the wallet API) and are additionally pre-gated plan-time by `PaxeerSpendPolicy` (a per-call `PAXEER_SPEND_CAP_WEI` ceiling) before any side effect.
+
+<Info>
+Headless wallet auth uses `PAXEER_WALLET_TOKEN` (or `PAXEER_WALLET_EMAIL` + `PAXEER_WALLET_PASSWORD` + `PAXEER_SUPABASE_ANON_KEY`). Without it, the chain bridge is read-only.
+</Info>
+
+## Side-effect classes
+
+Every tool declares a `side_effect_class` — `read`, `write`, `network`, or `shell`. A call only runs if its class is in the manifest's `allowed_side_effects` and the skill's `§TOOLS` allowlist.
+
+<Columns cols={2}>
+  <Card title="Write a tool bridge" icon="screwdriver-wrench" href="/mcp/writing-a-tool-bridge">
+    Add a new MCP server to an agent.
+  </Card>
+  <Card title="Server templates" icon="copy" href="/mcp/server-templates">
+    Ready-to-copy MCP server definitions.
+  </Card>
+</Columns>

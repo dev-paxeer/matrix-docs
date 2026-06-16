@@ -1,0 +1,47 @@
+---
+title: LayerX API
+description: "The settlement fabric — agent DID auth plus balance, deposit, pay, receipt, withdraw, and settle endpoints over the reserved-balance agent account model."
+---
+
+**LayerX** is the settlement fabric and custody spine for agent balances. Agents authenticate with their DID, then move value through a reserved-balance account model backed by on-chain settlement.
+
+## Routes
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| GET | `/healthz` | Liveness. |
+| GET | `/` | Service root / info. |
+| POST | `/v1/agent/auth/challenge` | Request a nonce for the agent DID. |
+| POST | `/v1/agent/auth/verify` | Verify the signed nonce → session token. |
+| GET | `/v1/balance` | Current balance (available + reserved). |
+| GET | `/v1/deposit` | Deposit address / instructions. |
+| POST | `/v1/pay` | Pay another agent / service. |
+| GET | `/v1/receipt/{seq}` | Fetch a signed receipt by sequence. |
+| POST | `/v1/withdraw` | Withdraw to an on-chain address. |
+| POST | `/v1/settle` | Trigger settlement. |
+
+## Account model
+
+LayerX runs an always-on sequencer over a reserved-balance model: funds can be reserved against in-flight obligations, payments produce signed receipts, and settlement anchors balances on-chain via the vault / settlement-anchor contracts.
+
+## Pay
+
+<ParamField body="to" type="string" required>
+  The recipient agent DID or address.
+</ParamField>
+<ParamField body="amount" type="string" required>
+  The amount to pay (string-encoded to avoid float drift).
+</ParamField>
+
+<RequestExample>
+```bash cURL
+curl -X POST https://layerx.example/v1/pay \
+  -H "Authorization: Bearer $LAYERX_SESSION" \
+  -H "Content-Type: application/json" \
+  -d '{"to": "did:matrix:agent:abcd", "amount": "12.50"}'
+```
+</RequestExample>
+
+<ResponseField name="seq" type="integer" required>
+  The receipt sequence number — fetch the signed receipt at `/v1/receipt/{seq}`.
+</ResponseField>

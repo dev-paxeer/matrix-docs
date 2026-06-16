@@ -1,0 +1,48 @@
+---
+title: Chatting with Matrix
+description: "How everyday conversation works — Neo as the front door, the Liaison narrator, when work is escalated to the rigorous MCL rail, and what the live transcript shows you."
+---
+
+For day-to-day use you just talk to Matrix. The conversational agent, **Neo**, handles your request directly and only escalates to the rigorous rail when something is monetary or irreversible.
+
+## Who you're talking to
+
+<Columns cols={2}>
+  <Card title="Neo" icon="comments">
+    Answers, runs tools (files, code, web, fetch), and keeps context across the conversation. Permissive on reversible work.
+  </Card>
+  <Card title="The Liaison" icon="user-tie">
+    A narrator that translates the technical pipeline (compile → plan → execute) into plain-language updates so you always know what's happening.
+  </Card>
+</Columns>
+
+## What happens when you send a message
+
+<Steps>
+  <Step title="Neo reads context">
+    It pulls relevant memory (facts, preferences, goals, past turns) so it doesn't ask you to repeat yourself.
+  </Step>
+  <Step title="It works the task">
+    Neo calls tools as needed, narrating progress. You see ephemeral status lines and a final answer.
+  </Step>
+  <Step title="It escalates if needed">
+    For anything that spends money or is irreversible, Neo hands off to the MCL rigorous rail, which produces a typed plan you review before it runs.
+  </Step>
+</Steps>
+
+<Tip>
+Long conversations are automatically compacted: Matrix consolidates older history into a summary while preserving every important identifier (file paths, addresses, IDs) verbatim, so nothing is silently dropped.
+</Tip>
+
+## The live transcript
+
+While Matrix works you see a streamed transcript: the answer, brief progress notes, and deliberate notices (for example, when it's consolidating memory or escalating to the rigorous rail). Behind the scenes this is the daemon's `/events` Server-Sent Events stream.
+
+<Columns cols={2}>
+  <Card title="Using skills" icon="wand-magic-sparkles" href="/user-guide/skills">
+    How Matrix's capabilities are packaged.
+  </Card>
+  <Card title="Wallet & PAX" icon="wallet" href="/user-guide/wallet">
+    How paid work and balances work.
+  </Card>
+</Columns>

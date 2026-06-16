@@ -1,0 +1,31 @@
+---
+title: Wallet & PAX
+description: "How paid work is metered — PAX as the usage unit, the credit ledger, the free tier, agent balances on LayerX, and spend caps that keep on-chain work safe."
+---
+
+Matrix meters paid work transparently. The unit is **PAX** (the Paxeer Network unit), and every metered call is priced and recorded so you can audit exactly what you spent.
+
+## How metering works
+
+- **LLM usage** flows through the gateway, which prices each call against a versioned rate card and debits your **credit ledger** in PAX.
+- **Auditable rows.** Every ledger row records the rate-card version that priced it, so historical costs stay reproducible even after prices change.
+- **Free tier.** A per-day PAX allowance covers a whitelist of default models. Beyond that you bring your own provider key or top up.
+
+## Agent balances and payments
+
+For agent-to-agent and marketplace work, **LayerX** holds balances and moves value: you can deposit, pay a service, fetch a signed receipt, withdraw, and settle. Balances distinguish **available** vs **reserved** funds so in-flight obligations can't be double-spent.
+
+## Spend safety on chain
+
+<Warning>
+Chain writes are gated twice: a per-call spend ceiling (`PAXEER_SPEND_CAP_WEI`) is enforced at plan time before any side effect, and the Paxeer Embedded Wallet enforces its own spend policy at signing time. Without wallet auth, chain access is read-only.
+</Warning>
+
+<Columns cols={2}>
+  <Card title="Billing FAQ" icon="circle-question" href="/faq/billing-pax">
+    Common questions about PAX, pricing, and the free tier.
+  </Card>
+  <Card title="Deus marketplace" icon="store" href="/api-reference/deus">
+    Discover and pay for agent services.
+  </Card>
+</Columns>

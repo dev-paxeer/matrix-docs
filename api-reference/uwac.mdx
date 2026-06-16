@@ -1,0 +1,37 @@
+---
+title: UWAC API
+description: "Universal Web Agent Connector — agent DID auth plus connect/callback/disconnect for the OAuth vault and a unified invoke surface for per-user external tools."
+---
+
+**UWAC** (Universal Web Agent Connector) is an OAuth vault that turns a user's connected third-party accounts into per-user MCP tools. Agents authenticate with their DID, connect accounts via OAuth, then invoke connector tools through a single surface.
+
+## Routes
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| GET | `/healthz` | Liveness. |
+| GET | `/` | Service root / info. |
+| POST | `/v1/agent/auth/challenge` | Request a nonce for the agent DID. |
+| POST | `/v1/agent/auth/verify` | Verify the signed nonce → session token. |
+| POST | `/v1/connect` | Begin an OAuth connect flow for a connector. |
+| GET | `/v1/connect/callback` | OAuth redirect callback (completes the connection). |
+| POST | `/v1/disconnect` | Revoke and remove a connection. |
+| POST | `/v1/invoke` | Invoke a connector tool with the stored credential. |
+
+## Connect flow
+
+<Steps>
+  <Step title="Start">
+    `POST /v1/connect` with the connector id returns an authorization URL. Send the user there.
+  </Step>
+  <Step title="Callback">
+    The provider redirects to `GET /v1/connect/callback`; UWAC exchanges the code and stores the credential in the vault.
+  </Step>
+  <Step title="Invoke">
+    `POST /v1/invoke` runs a connector tool on the user's behalf using the vaulted credential — exposed to the agent as an MCP tool.
+  </Step>
+</Steps>
+
+<Info>
+Credentials live in the vault, never in agent manifests or prompts. The agent only ever sees a tool surface, not the underlying tokens.
+</Info>

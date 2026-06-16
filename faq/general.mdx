@@ -1,0 +1,22 @@
+---
+title: General FAQ
+description: "High-level questions about Matrix — what it is, the two rails, how it relates to Paxeer, and why it uses typed intents."
+---
+
+<AccordionGroup>
+  <Accordion title="What is Matrix?">
+    Matrix is the cognition and UX layer on top of Paxeer Network. It turns natural-language requests into a typed, inspectable, correctable Intent IR that an agent can execute — avoiding prompt fragility, intent loss, missing shared ontology, and unstructured correction.
+  </Accordion>
+  <Accordion title="What are the two rails?">
+    **Neo** is the default conversational rail for reversible work. The **MCL pipeline** is the rigorous rail that compiles prose into a typed plan and walks it deterministically — used for monetary or irreversible work. Both share one memory + execution substrate.
+  </Accordion>
+  <Accordion title="Why typed intents instead of just prompting?">
+    A typed Frame (closed verbs, typed objects, constraints, success criteria) survives multi-step execution and can be corrected structurally. Plain prompts drift; a typed intent is content-addressed, signable, and replayable.
+  </Accordion>
+  <Accordion title="How does Matrix relate to Paxeer?">
+    Paxeer Network (Chain ID 125) is the underlying chain and economy. Matrix is the agent layer above it: it meters usage in PAX, settles agent balances via LayerX, and reaches the chain through the `paxeer-net` MCP server.
+  </Accordion>
+  <Accordion title="Is Matrix open source?">
+    It's source-available under the Matrix-Protocol License: read, use, deploy, and integrate freely; redistribute modifications under the same license. A commercial license applies past defined revenue/liquidity thresholds.
+  </Accordion>
+</AccordionGroup>

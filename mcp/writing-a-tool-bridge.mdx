@@ -1,0 +1,60 @@
+---
+title: Writing a Tool Bridge
+description: "Add a new MCP server to a Matrix agent — declare the server in the manifest, enumerate its tools exhaustively, pin the package digest, wire credentials, and verify the bijection."
+---
+
+Adding a capability to an agent means adding an MCP server to its manifest. Matrix never calls undeclared tools, so the manifest is the single source of truth.
+
+<Steps>
+  <Step title="Declare the server">
+    Add an entry to the manifest's `servers` array with an `alias`, `transport`, and how to launch it:
+
+    ```json
+    {
+      "alias": "github",
+      "transport": "stdio",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-github"],
+      "env": ["GITHUB_TOKEN=$env:GITHUB_TOKEN"],
+      "version": "2025.1.0",
+      "package_digest": "sha256:…",
+      "tools": []
+    }
+    ```
+  </Step>
+  <Step title="Enumerate every tool">
+    The `tools` array must list **exactly** what the server advertises — name, description, and `side_effect_class`. The manager rejects any drift at boot (Q21).
+
+    ```json
+    "tools": [
+      {"name": "create_issue", "description": "Open an issue", "side_effect_class": "network"},
+      {"name": "list_issues",  "description": "List issues",  "side_effect_class": "network"}
+    ]
+    ```
+  </Step>
+  <Step title="Pin the package digest">
+    Compute the sha256 of the published package and set `package_digest` (`sha256:<64-hex>`). Bump `version` to match — it forms the tool URI pin.
+  </Step>
+  <Step title="Wire credentials safely">
+    Reference secrets as `$env:NAME`, never literals. The executor resolves them from its own environment at spawn time.
+  </Step>
+  <Step title="Verify the bijection">
+    Run `mcl-tools verify -manifest agents/<name>.json`. It spawns each server and asserts declared tools == discovered tools. Use `mcl-tools list` / `describe` / `call` to inspect and test.
+  </Step>
+  <Step title="Grant the tool to a skill">
+    A plan can only call a tool a skill declares. Add the version-pinned URI to the skill's `§TOOLS`:
+
+    ```mtx
+    §TOOLS
+    matrix://tool/mcp/github/create_issue@2025.1.0
+    ```
+  </Step>
+</Steps>
+
+<Warning>
+The side-effect class of every tool must be covered by the manifest's `allowed_side_effects`. A `shell` tool on an agent that only allows `read`/`network` will be refused by the capability gate.
+</Warning>
+
+<Card title="MCP overview" icon="plug" href="/mcp/overview">
+  The resolution, bijection, and gating model in full.
+</Card>

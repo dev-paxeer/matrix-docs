@@ -1,0 +1,48 @@
+---
+title: Server Templates
+description: "The mcp-server-templates.json catalog — ready-to-copy MCP server definitions for popular integrations like GitHub, Supabase, Playwright, Cloudflare, and more."
+---
+
+`agents/mcp-server-templates.json` is a catalog of ready-to-copy MCP server definitions. Copy the servers you need into an agent manifest (Matrix form) or a `~/.claude.json` `mcpServers` block, then replace the `YOUR_*_HERE` placeholders.
+
+## Selected templates
+
+| Server | Launch | Description |
+| --- | --- | --- |
+| `github` | `npx @modelcontextprotocol/server-github` | PRs, issues, repos. |
+| `supabase` | `npx @supabase/mcp-server-supabase` | Supabase database operations. |
+| `playwright` | `npx @playwright/mcp` | Browser automation and testing. |
+| `firecrawl` | `npx firecrawl-mcp` | Web scraping and crawling. |
+| `exa-web-search` | `npx exa-mcp-server` | Web search and research via Exa. |
+| `context7` | `npx @upstash/context7-mcp` | Live documentation lookup. |
+| `jira` / `confluence` | `uvx mcp-atlassian` / `npx confluence-mcp-server` | Atlassian issue tracking + wiki. |
+| `vercel` / `railway` | `http` / `npx @railway/mcp-server` | Deployment platforms. |
+| `cloudflare-*` | `http` (docs, builds, bindings, observability) | Cloudflare surfaces. |
+| `clickhouse` | `http` | Analytics queries. |
+| `memory` / `omega-memory` | `npx @modelcontextprotocol/server-memory` / `uvx omega-memory` | Persistent memory. |
+| `sequential-thinking` | `npx @modelcontextprotocol/server-sequential-thinking` | Chain-of-thought reasoning. |
+| `fal-ai` | `npx fal-ai-mcp-server` | AI image/video/audio generation. |
+
+## stdio vs http templates
+
+```json
+"github": {
+  "command": "npx",
+  "args": ["-y", "@modelcontextprotocol/server-github"],
+  "env": { "GITHUB_PERSONAL_ACCESS_TOKEN": "YOUR_GITHUB_PAT_HERE" },
+  "description": "GitHub operations - PRs, issues, repos"
+},
+"vercel": {
+  "type": "http",
+  "url": "https://mcp.vercel.com",
+  "description": "Vercel deployments and projects"
+}
+```
+
+<Info>
+The catalog's own guidance: replace `YOUR_*_HERE` with real values, and keep under ~10 servers enabled at once to preserve the context window.
+</Info>
+
+<Note>
+These templates use the generic `mcpServers` shape. To use one in a Matrix agent, translate it to the [agent-manifest schema](/mcp/agent-manifests) — add an `alias`, `version`, `package_digest`, and an exhaustive `tools` list, and convert env secrets to `$env:NAME` refs.
+</Note>

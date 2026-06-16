@@ -76,6 +76,45 @@
             ]
           }
         ]
+      },
+      {
+        "tab": "API Reference",
+        "icon": "plug",
+        "groups": [
+          {
+            "group": "API Reference",
+            "icon": "code",
+            "pages": [
+              "api-reference/overview",
+              "api-reference/daemon",
+              "api-reference/gateway",
+              "api-reference/router",
+              "api-reference/chronos",
+              "api-reference/deus",
+              "api-reference/layerx",
+              "api-reference/uwac",
+              "api-reference/tachyon",
+              "api-reference/cli"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "MCP",
+        "icon": "puzzle-piece",
+        "groups": [
+          {
+            "group": "Model Context Protocol",
+            "icon": "puzzle-piece",
+            "pages": [
+              "mcp/overview",
+              "mcp/agent-manifests",
+              "mcp/tool-servers",
+              "mcp/writing-a-tool-bridge",
+              "mcp/server-templates"
+            ]
+          }
+        ]
       }
     ]
   }
