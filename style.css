@@ -1,69 +1,50 @@
 /* ==========================================================================
-   Matrix Docs — Cursor-inspired theme
-   Warm neutrals + vibrant orange accent + pill buttons + minimal shadows +
-   spring easing. Built on Jamdesk's documented CSS variables and component
-   data-attributes (see jamdesk.com/docs/customization/custom-css).
+   Matrix Docs — Cursor-inspired theme (restrained)
+   Warm neutral palette + a single vibrant-orange accent used SPARINGLY
+   (active items, links, the CTA). Built only on Jamdesk's documented CSS
+   variables — no broad button/tab overrides, so the native layout is intact.
 
-   The real Cursor faces (CursorGothic, Berkeley Mono) are proprietary; this
-   uses the closest freely-available stand-ins (Inter, JetBrains Mono).
+   Real Cursor faces (CursorGothic, Berkeley Mono) are proprietary; this uses
+   the closest free stand-ins (Inter, JetBrains Mono).
    ========================================================================== */
 
 @import url('https://fonts.googleapis.com/css2?family=Inter:ital,wght@0,400;0,500;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
 
 /* --------------------------------------------------------------------------
-   Design tokens
+   Tokens
    -------------------------------------------------------------------------- */
 :root {
-  /* Cursor accent — vibrant orange */
-  --cursor-orange: #f54e00;
-  --cursor-orange-bright: #ff6a2b;
-
-  /* Spring easing + durations (Cursor: fast 0.14s, slow 0.25s) */
-  --cursor-ease: cubic-bezier(0.25, 1, 0.5, 1);
-  --cursor-fast: 0.14s;
-  --cursor-slow: 0.25s;
-
-  /* Typography — warm neutral grotesque + premium mono stand-ins */
+  /* Typography */
   --font-family-sans: 'Inter', system-ui, -apple-system, sans-serif;
   --font-family-mono: 'JetBrains Mono', 'Berkeley Mono', ui-monospace, SFMono-Regular, monospace;
 
-  /* Border radius scale (Cursor: 2px → 16px) */
+  /* Radius (Cursor: small, restrained — not pill) */
   --radius-sm: 4px;
   --radius-md: 8px;
-  --radius-lg: 14px;
+  --radius-lg: 12px;
 
   /* Reading measure */
   --content-max-width: 880px;
 
-  /* ---- Light mode: warm off-white, warm dark ink ---- */
-  --color-background: #f7f7f4;   /* warm off-white */
-  --color-text: #26251e;         /* warm dark */
-  --color-text-muted: #6f6d61;   /* warm muted */
+  /* Light: warm off-white + warm dark ink */
+  --color-background: #f7f7f4;
+  --color-text: #26251e;
+  --color-text-muted: #6f6d61;
   --color-border: rgba(38, 37, 30, 0.10);
-  --color-code-bg: #f2f1ed;      /* card-01 */
-  --color-primary: var(--cursor-orange);
+  --color-code-bg: #f2f1ed;
+  --color-primary: #f54e00;
   --color-primary-subtle: rgba(245, 78, 0, 0.08);
-
-  /* Warm card elevation levels (light) */
-  --cursor-card-01: #f2f1ed;
-  --cursor-card-02: #ecebe6;
-  --cursor-card-03: #e6e5df;
 }
 
-/* ---- Dark mode: warm near-black, warm light ink ---- */
+/* Dark: warm near-black + warm light ink */
 [data-theme="dark"] {
-  --color-background: #14120b;   /* warm near-black */
-  --color-text: #edecec;         /* warm light gray */
-  --color-text-muted: #a8a59a;   /* warm muted */
-  --color-border: rgba(237, 236, 236, 0.12);
-  --color-code-bg: #1b1913;      /* card-01 dark */
-  --color-primary: var(--cursor-orange-bright);
-  --color-primary-subtle: rgba(245, 78, 0, 0.16);
-
-  /* Warm card elevation levels (dark) */
-  --cursor-card-01: #1b1913;
-  --cursor-card-02: #211f17;
-  --cursor-card-03: #2b2923;
+  --color-background: #14120b;
+  --color-text: #edecec;
+  --color-text-muted: #a8a59a;
+  --color-border: rgba(237, 236, 236, 0.10);
+  --color-code-bg: #1b1913;
+  --color-primary: #ff6a2b;
+  --color-primary-subtle: rgba(245, 78, 0, 0.14);
 }
 
 /* --------------------------------------------------------------------------
@@ -72,148 +53,62 @@
 html, body {
   background-color: var(--color-background);
   color: var(--color-text);
+  font-family: var(--font-family-sans);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  font-family: var(--font-family-sans);
 }
 
 /* Tight, confident headings (Cursor uses negative tracking) */
 .content h1, .content h2, .content h3, .content h4 {
-  font-family: var(--font-family-sans);
-  letter-spacing: -0.021em;
+  letter-spacing: -0.02em;
   font-weight: 700;
 }
 .content h1 { letter-spacing: -0.03em; }
-
-.content h2 { margin-top: 3rem; margin-bottom: 1rem; }
+.content h2 { margin-top: 2.75rem; margin-bottom: 1rem; }
 .content h3 { margin-top: 2rem; margin-bottom: 0.75rem; }
 
-code, pre, kbd, [data-component="code-block"] {
+/* --------------------------------------------------------------------------
+   Code — warm surface, premium mono
+   -------------------------------------------------------------------------- */
+code, pre, kbd {
   font-family: var(--font-family-mono);
 }
 pre code { font-variant-ligatures: common-ligatures; }
-
-/* --------------------------------------------------------------------------
-   Links — orange accent, offset underline
-   -------------------------------------------------------------------------- */
-.content a:not([class]) {
-  color: var(--color-primary);
-  text-decoration: underline;
-  text-decoration-thickness: 1px;
-  text-underline-offset: 2px;
-  transition: text-decoration-thickness var(--cursor-fast) var(--cursor-ease),
-              color var(--cursor-fast) var(--cursor-ease);
-}
-.content a:not([class]):hover {
-  text-decoration-thickness: 2px;
-}
-
-/* --------------------------------------------------------------------------
-   Cards — warm elevated surface, generous radius, layering by tone (not
-   heavy strokes), subtle hover lift via spring easing
-   -------------------------------------------------------------------------- */
-[data-component="card"] {
-  background-color: var(--cursor-card-01) !important;
-  border: 1px solid var(--color-border) !important;
-  border-radius: var(--radius-lg) !important;
-  box-shadow: none !important;
-  transition: background-color var(--cursor-fast) var(--cursor-ease),
-              transform var(--cursor-fast) var(--cursor-ease),
-              border-color var(--cursor-fast) var(--cursor-ease);
-}
-[data-component="card"]:hover {
-  background-color: var(--cursor-card-02) !important;
-  border-color: var(--color-primary-subtle) !important;
-}
-
-/* --------------------------------------------------------------------------
-   Code blocks — warm surface, medium radius
-   -------------------------------------------------------------------------- */
-[data-component="code-block"], pre {
-  background-color: var(--color-code-bg) !important;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md) !important;
-}
 :not(pre) > code {
   background-color: var(--color-code-bg);
   border-radius: var(--radius-sm);
   padding: 0.15em 0.4em;
   font-size: 0.875em;
 }
-
-/* --------------------------------------------------------------------------
-   Buttons — pill-shaped (Cursor: effectively infinite radius), primary uses
-   foreground/background inversion, spring transitions. Selectors are
-   best-effort across the navbar button + MDX button-like elements.
-   -------------------------------------------------------------------------- */
-button,
-a[role="button"],
-[data-component="button"],
-.btn,
-button[class*="primary"],
-a[class*="button"] {
-  border-radius: 9999px !important;
-  transition: background-color var(--cursor-fast) var(--cursor-ease),
-              color var(--cursor-fast) var(--cursor-ease),
-              transform var(--cursor-fast) var(--cursor-ease),
-              opacity var(--cursor-fast) var(--cursor-ease) !important;
-}
-button:active,
-a[role="button"]:active,
-[data-component="button"]:active {
-  transform: scale(0.98);
-}
-
-/* Primary/CTA button: foreground bg, background text (Cursor inversion) */
-[data-component="button"][data-variant="primary"],
-button[class*="primary"],
-.navbar button,
-.navbar a[class*="button"] {
-  background-color: var(--color-primary) !important;
-  color: #ffffff !important;
-  padding: 0.62rem 1.25rem 0.64rem !important;
-  font-weight: 600;
-}
-[data-component="button"][data-variant="primary"]:hover,
-button[class*="primary"]:hover,
-.navbar button:hover {
-  opacity: 0.92;
-}
-
-/* --------------------------------------------------------------------------
-   Callouts — accent the Note/Tip with the warm primary tint
-   -------------------------------------------------------------------------- */
-[data-callout="note"],
-[data-callout="tip"],
-[data-callout="info"] {
-  border-left-width: 3px;
+pre, [data-component="code-block"] {
   border-radius: var(--radius-md);
-  background: var(--color-primary-subtle);
 }
 
 /* --------------------------------------------------------------------------
-   Tabs — active tab gets an orange indicator
+   Links — orange accent, offset underline (accent used here, on purpose)
    -------------------------------------------------------------------------- */
-[data-component="tabs"] [data-state="active"] {
-  border-bottom-width: 2px;
-  border-bottom-color: var(--color-primary);
+.content a:not([class]) {
   color: var(--color-primary);
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+}
+.content a:not([class]):hover {
+  text-decoration-thickness: 2px;
 }
 
 /* --------------------------------------------------------------------------
-   Header — subtle backdrop blur (Cursor uses an 8/12/16px scale)
+   Cards — warm surface + restrained radius. No forced accent fills.
    -------------------------------------------------------------------------- */
-header, [data-component="header"], [data-component="navbar"] {
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  border-bottom: 1px solid var(--color-border);
+[data-component="card"] {
+  border-radius: var(--radius-lg);
 }
 
 /* --------------------------------------------------------------------------
-   Selection — warm orange highlight
+   Selection — subtle warm highlight
    -------------------------------------------------------------------------- */
 ::selection {
-  background: rgba(245, 78, 0, 0.22);
+  background: rgba(245, 78, 0, 0.20);
 }
 
 /* --------------------------------------------------------------------------
