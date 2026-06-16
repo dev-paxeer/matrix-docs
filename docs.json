@@ -287,6 +287,21 @@
             ]
           }
         ]
+      },
+      {
+        "tab": "For Agents",
+        "icon": "robot",
+        "groups": [
+          {
+            "group": "Agent Resources",
+            "icon": "file-lines",
+            "pages": [
+              "llms",
+              "sitemap",
+              "agent"
+            ]
+          }
+        ]
       }
     ]
   }

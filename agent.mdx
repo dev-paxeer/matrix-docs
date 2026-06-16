@@ -1,0 +1,134 @@
+---
+title: Agent Manifest
+description: "Documentation structure and navigation guide for AI agents consuming Matrix docs."
+---
+
+This page describes the Matrix documentation structure for AI agents and LLMs.
+
+## Repository Overview
+
+Matrix is the cognition and UX layer on Paxeer Network. It turns natural language into typed, inspectable, replayable agent execution across two rails:
+
+- **Neo**: Conversational tool-calling agent for reversible work
+- **MCL**: Rigorous rail for monetary/irreversible work (NL → Intent IR → Plan → Walk)
+
+## Documentation Structure
+
+### Entry Points (read these first)
+
+1. [Introduction](/introduction) - Mental model, two rails, full stack overview
+2. [Quickstart](/quickstart) - Build, compile first intent, run daemon
+3. [Core Concepts](/concepts) - Core concepts: intents, frames, verbs, cortex, replay
+4. [Glossary](/glossary) - All Matrix terms defined
+
+### Key Subsystems
+
+**Core Modules** (see [Architecture](/developer/architecture) for the layered model):
+
+- `mcl/` - Compiler: prose → Intent IR → PlanTree
+- `cortex/` - Per-actor typed memory graph (Pebble DB, journal, snapshots)
+- `executor/` - Plan walker, lifecycle machine, MCP dispatch
+- `neo/` - Conversational agent, tool-calling loop
+- `gateway/` - Metered LLM proxy, PAX credit ledger
+- `router/` - JWT verify, Fly Machine wake, reverse proxy
+- `deus/` - Agent-service marketplace
+- `layerx/` - Settlement fabric, custody spine
+- `chronos/` - Agent scheduler, wake system
+- `tachyon/` - Solidity/EVM engine
+- `uwac/` - Universal Web Agent Connector
+
+### File Format
+
+All documentation uses `.mdx` (Markdown + JSX components). Frontmatter includes:
+
+- `title`: Page title
+- `description`: One-line summary
+
+Common MDX components:
+
+- `<Columns cols={N}>` - Multi-column layout
+- `<Card title="..." icon="..." href="...">` - Navigation cards
+- `<Tip>`, `<Note>`, `<Warning>` - Callout boxes
+- `<Steps>` / `<Step title="...">` - Numbered procedures
+- `<AccordionGroup>` / `<Accordion title="...">` - Collapsible sections
+
+### Navigation
+
+The `docs.json` file defines the navigation structure:
+
+- 6 tabs: Documentation, Developer, API Reference, MCP, Reference, FAQ
+- Each tab has groups of related pages
+- Reference section has deep subsystem docs (cortex, mcl, neo, chronos, tachyon, deus, layerx, skills, standards)
+
+### API Reference
+
+- [Overview](/api-reference/overview) - Service table, auth patterns
+- [Daemon](/api-reference/daemon) - HTTP + SSE surface (/chat, /events, /messages, /intents)
+- [Gateway](/api-reference/gateway) - Metered LLM proxy, rate card
+- [Router](/api-reference/router) - JWT verify, wake, proxy
+- [Chronos](/api-reference/chronos) - Scheduler API
+- [Deus](/api-reference/deus) - Marketplace API
+- [LayerX](/api-reference/layerx) - Settlement API
+- [UWAC](/api-reference/uwac) - OAuth vault API
+- [Tachyon](/api-reference/tachyon) - EVM engine API
+- [CLI](/api-reference/cli) - CLI reference
+
+### Deep Reference
+
+Each subsystem has an `overview.mdx` plus detailed pages:
+
+- `reference/cortex/` - 13 pages (store, journal, taxonomy, write API, find, context bundle, embedder, edges, snapshots, salience, attest, scope, replay)
+- `reference/mcl/` - 8 pages (compiler pipeline, intent IR, envelope, matrixscript, skill authoring, mclc CLI, LLM client)
+- `reference/neo/` - 10 pages (control loop, memory system, recall lane, conversation store, core execute, writeback, tool surface, LLM client, config)
+- `reference/chronos/` - 10 pages (architecture, API, auth, config, data model, dispatch worker, schedule engine, tool surface, wake delivery)
+- `reference/tachyon/` - 17 pages (daemon, API server, RPC server, MCP server, compiler, engine, ABI encoder, EVM client, deployer, wallet, registry, simulate, tester, chains, config, types)
+- `reference/deus/` - 6 pages (service entrypoints, discovery, receipts, chain access, hosting, contracts)
+- `reference/layerx/` - 3 pages (daemon, settlement contracts, forge integration)
+- `reference/skills/` - 5 pages (agent engineering, planning, react, brand, tooling)
+- `reference/standards/` - 5 pages (contribution, testing, patterns, lifecycle, security)
+
+### Cross-References
+
+Pages link to each other using:
+
+- Markdown links: `[text](/path/to/page)`
+- Card components: `<Card title="..." href="/path/to/page">`
+
+All internal links resolve to existing `.mdx` files except:
+
+- `faq/security.mdx` references `SECURITY.md` which does not exist
+
+### Build & Deploy
+
+- Source: `https://github.com/dev-paxeer/matrix-docs`
+- Platform: Jamdesk documentation platform
+- Build: `jamdesk build` (generates static site)
+- Deploy: `jamdesk deploy` (publishes to docs.matrixmcl.com)
+
+## Agent Consumption
+
+For LLM/agent consumption:
+
+1. Read [LLM Index](/llms) for a structured index with descriptions
+2. Read [Sitemap](/sitemap) for a flat list of all paths
+3. Read individual `.mdx` files, stripping JSX components to extract text
+4. The [Glossary](/glossary) is pure markdown tables — easiest to parse
+
+## Known Issues
+
+1. `README.md` is Jamdesk template boilerplate (not Matrix-specific)
+2. FAQ pages use `<Accordion>` only — no markdown headings for structure
+3. `api-reference/request-response-examples.mdx` and `api-reference/openapi-example.mdx` are Jamdesk template demos (not Matrix content)
+4. `mcp/writing-a-tool-bridge.mdx` has zero markdown headings
+5. `faq/security.mdx` references non-existent `SECURITY.md`
+6. API reference pages lack response body shapes and error examples
+7. `user-guide/skills.mdx` is thin (216 words, 2 headings)
+
+## Recommendations for Agents
+
+1. Start with [Introduction](/introduction), [Core Concepts](/concepts), [Glossary](/glossary) for mental model
+2. Use [Quickstart](/quickstart) for build/run instructions
+3. For subsystem details, read the `overview.mdx` first, then drill into specific pages
+4. Strip MDX components (`<Columns>`, `<Card>`, `<Tip>`, etc.) to extract plain text
+5. All code examples are in standard markdown code blocks — parse normally
+6. Cross-references use absolute paths from root (`/path/to/page`)
