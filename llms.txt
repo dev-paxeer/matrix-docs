@@ -1,0 +1,172 @@
+# Matrix Documentation Index for LLMs
+
+> Matrix is the cognition and UX layer on Paxeer Network — it turns natural language into typed, inspectable, replayable agent execution across two rails: Neo and the MCL pipeline.
+
+## Core Documentation
+
+- [Introduction](/introduction): Overview of Matrix, the two rails (Neo and MCL), and the full stack
+- [Quickstart](/quickstart): Clone, build, compile your first intent, drive an end-to-end walk, run the daemon
+- [Core Concepts](/concepts): Intents, frames, verbs, skills, cortex memory, envelopes, attestation, replay invariant
+- [Glossary](/glossary): Definitions for all Matrix terms — rails, intents, frames, cortex, skills, envelopes, MCP, PAX
+
+## User Guide
+
+- [Chat](/user-guide/chat): How to interact with Neo through the chat interface
+- [Skills](/user-guide/skills): Using and authoring skills for Matrix
+- [Wallet](/user-guide/wallet): Managing PAX credits, metering, LayerX settlement, spend caps
+
+## Developer Documentation
+
+- [Architecture](/developer/architecture): Layered model, module boundaries, cross-cutting flows, invariants
+- [MCL](/developer/mcl): Matrix Communication Layer — compiler pipeline, skill authoring, Intent IR
+- [Cortex](/developer/cortex): Per-actor typed memory graph — journal, taxonomy, snapshots, replay
+- [Executor](/developer/executor): Plan walker, lifecycle machine, MCP tool dispatch, daemon
+- [Neo](/developer/neo): Default conversational agent — tool-calling loop, memory, recovery
+- [Determinism & Replay](/developer/determinism-replay): Byte-deterministic replay invariant and CI enforcement
+- [Build, Test & Lint](/developer/build-test-lint): Makefile targets, CI pipeline, linting
+- [Contributing](/developer/contributing): Ground rules, commit format, PR workflow
+- [Deployment](/developer/deployment): Docker image, Fly Machine topology, environment config
+
+## API Reference
+
+- [Overview](/api-reference/overview): Service table, auth patterns, common request/response shapes
+- [Daemon](/api-reference/daemon): HTTP + SSE surface — /chat, /events, /messages, /intents, /me
+- [Gateway](/api-reference/gateway): Metered LLM proxy, PAX credit ledger, rate card
+- [Router](/api-reference/router): JWT verify, Fly Machine wake, reverse proxy
+- [Chronos](/api-reference/chronos): Agent scheduler — alarms, wakes, cron expressions
+- [Deus](/api-reference/deus): Agent-service marketplace — registry, discovery, metered invoke, receipts
+- [LayerX](/api-reference/layerx): Settlement fabric, custody spine, agent balances
+- [UWAC](/api-reference/uwac): Universal Web Agent Connector — OAuth vault, per-user MCP tools
+- [Tachyon](/api-reference/tachyon): Agent-native Solidity/EVM engine — compile, test, simulate, deploy
+- [CLI](/api-reference/cli): Command-line interface subcommands and flags
+
+## Model Context Protocol (MCP)
+
+- [Overview](/mcp/overview): URI scheme, transport (stdio/streamable-HTTP), credential rules
+- [Agent Manifests](/mcp/agent-manifests): DID-bound JSON schema, field table, locked rules
+- [Tool Servers](/mcp/tool-servers): Catalog of 12 MCP servers and their tools
+- [Writing a Tool Bridge](/mcp/writing-a-tool-bridge): Step-by-step guide to building a new MCP bridge
+- [Server Templates](/mcp/server-templates): Reusable templates for common tool patterns
+
+## Deep Reference: Cortex
+
+- [Overview](/reference/cortex/overview): Architecture and design decisions
+- [Store & Journal](/reference/cortex/store-and-journal): Pebble DB, append-only journal, canonical CBOR
+- [Memory Taxonomy](/reference/cortex/memory-taxonomy): 9-type taxonomy, deterministic rendering forms
+- [Write API](/reference/cortex/write-api): Mutation operations, seq monotonicity
+- [Find & Query](/reference/cortex/find-query): Semantic search, HNSW vector index, filters
+- [Context Bundle](/reference/cortex/context-bundle): Assembling context for agent consumption
+- [Embedder & Vector](/reference/cortex/embedder-and-vector): Embedding model, pure-Go HNSW
+- [Edges & Graph](/reference/cortex/edges-and-graph): Relationship modeling, graph traversal
+- [Snapshot & Proofs](/reference/cortex/snapshot-and-proofs): Merkle-anchored snapshots (MMR + SMT-256)
+- [Salience](/reference/cortex/salience): 5-factor cold score, EMA weight learner
+- [Attest & Compact](/reference/cortex/attest-and-compact): Terminal state attestation, compaction
+- [Scope](/reference/cortex/scope): Per-actor isolation, multi-tenant design
+- [Replay](/reference/cortex/replay): DropDerived + rebuild, OverallRoot verification
+
+## Deep Reference: MCL
+
+- [Overview](/reference/mcl/overview): Compiler architecture and design decisions
+- [Compiler Pipeline](/reference/mcl/compiler-pipeline): Prose → Intent IR → PlanTree
+- [Intent IR](/reference/mcl/intent-ir): Frame structure, verbs, objects, constraints
+- [Envelope](/reference/mcl/envelope): Signed lifecycle records, ed25519, canonical CBOR
+- [MatrixScript](/reference/mcl/matrixscript): SKILL.mtx syntax, §PROCEDURE blocks
+- [Skill Authoring](/reference/mcl/skill-authoring): Writing SKILL.mtx + SKILL.md
+- [mclc CLI](/reference/mcl/mclc-cli): Compiler CLI reference
+- [LLM Client](/reference/mcl/llm-client): LLM integration, prompt structure
+
+## Deep Reference: Neo
+
+- [Overview](/reference/neo/overview): Agent architecture and design decisions
+- [Control Loop](/reference/neo/control-loop): Tool-calling loop, decision logic
+- [Memory System](/reference/neo/memory-system): Paged cortex memory, recall
+- [Recall Lane](/reference/neo/recall-lane): Memory retrieval and ranking
+- [Conversation Store](/reference/neo/conversation-store): Thread management, history
+- [Core Execute](/reference/neo/core-execute): Delegation to MCL for irreversible work
+- [Writeback & Consolidation](/reference/neo/writeback-consolidation): Memory updates, compaction
+- [Tool Surface](/reference/neo/tool-surface): Available tools, MCP integration
+- [LLM Client](/reference/neo/llm-client): LLM provider integration
+- [Config System](/reference/neo/config-system): Configuration options
+
+## Deep Reference: Chronos
+
+- [Overview](/reference/chronos/overview): Scheduler architecture
+- [Architecture](/reference/chronos/architecture): System design, components
+- [API Reference](/reference/chronos/api-reference): Endpoints, request/response
+- [Auth System](/reference/chronos/auth-system): Authentication, authorization
+- [Config System](/reference/chronos/config-system): Configuration options
+- [Data Model](/reference/chronos/data-model): Alarm, wake, schedule structures
+- [Dispatch Worker](/reference/chronos/dispatch-worker): Wake delivery, retry logic
+- [Schedule Engine](/reference/chronos/schedule-engine): Cron parsing, fire-time calculation
+- [Tool Surface](/reference/chronos/tool-surface): MCP tools for scheduling
+- [Wake Delivery](/reference/chronos/wake-delivery): Wake message format, delivery guarantees
+
+## Deep Reference: Tachyon
+
+- [Overview](/reference/tachyon/overview): EVM engine architecture
+- [Daemon](/reference/tachyon/daemon): Background service, lifecycle
+- [API Server](/reference/tachyon/api-server): HTTP endpoints
+- [RPC Server](/reference/tachyon/rpc-server): JSON-RPC interface
+- [MCP Server](/reference/tachyon/mcp-server): MCP tool integration
+- [Compiler](/reference/tachyon/compiler): Solidity compilation
+- [Engine](/reference/tachyon/engine): Execution engine
+- [ABI Encoder](/reference/tachyon/abi-encoder): ABI encoding/decoding
+- [EVM Client](/reference/tachyon/evm-client): Blockchain interaction
+- [Deployer](/reference/tachyon/deployer): Contract deployment
+- [Wallet](/reference/tachyon/wallet): Key management, signing
+- [Registry](/reference/tachyon/registry): Contract registry
+- [Simulate](/reference/tachyon/simulate): Transaction simulation
+- [Tester](/reference/tachyon/tester): Testing framework
+- [Chains](/reference/tachyon/chains): Multi-chain support
+- [Config](/reference/tachyon/config): Configuration
+- [Types](/reference/tachyon/types): Type definitions
+
+## Deep Reference: Deus
+
+- [Service Entrypoints](/reference/deus/service-entrypoints-api-server-docs-and-schema-migrations): API server, docs, migrations
+- [Discovery & Embedding](/reference/deus/discovery-extraction-embedding-and-index-construction): Service discovery, embedding, indexing
+- [Receipts & Metering](/reference/deus/receipts-vouchers-metering-channels-and-storage): EIP-712 receipts, vouchers, channels
+- [Chain Access & Auth](/reference/deus/chain-access-auth-wallet-clients-registries-and-manifests): Wallet clients, registries, manifests
+- [Hosting & Budgets](/reference/deus/hosting-backends-and-budget-controls): Hosting backends, budget controls
+- [Solidity Contracts](/reference/deus/solidity-contracts-deployment-scripts-and-end-to-end-protocol-tests): Contracts, deployment, tests
+
+## Deep Reference: LayerX
+
+- [LayerX Daemon](/reference/layerx/layerx-daemon-auth-chain-accumulator-store-ledger-and-types): Auth, chain accumulator, store, ledger
+- [Settlement Contracts](/reference/layerx/settlementanchor-ierc20-eip712-safeerc20-and-deployment-contracts): SettlementAnchor, IERC20, EIP712
+- [Forge Integration](/reference/layerx/forge-std-integration-fixtures-and-solidity-test-support): Forge std, fixtures, test support
+
+## Deep Reference: Skills
+
+- [Agent Engineering](/reference/skills/agent-engineering-api-design-architecture-and-evaluation-skills): API design, architecture, evaluation
+- [Planning & Review](/reference/skills/planning-review-qa-code-quality-cli-and-performance-skills): Planning, QA, code quality, CLI, performance
+- [React & Design](/reference/skills/react-design-design-system-styling-and-technical-writing-skills): React, design system, styling, writing
+- [Brand & Self-Improvement](/reference/skills/brand-self-improvement-continuous-learning-commit-writing-and-coding-patterns-skills): Brand, learning, commits, patterns
+- [Tooling & Manifests](/reference/skills/ck-command-tooling-agent-manifests-and-index-building-assets): Tooling, manifests, index building
+
+## Deep Reference: Standards
+
+- [Contribution Workflow](/reference/standards/contribution-workflow-code-review-changelog-and-licenses): Code review, changelog, licenses
+- [Testing Rules](/reference/standards/testing-rules-and-project-specific-qa-guidance): Testing rules, QA guidance
+- [Patterns & Architecture](/reference/standards/patterns-architecture-heuristics-and-performance-guidance): Patterns, heuristics, performance
+- [Hook & Lifecycle](/reference/standards/hook-and-lifecycle-conventions-across-language-rule-sets): Lifecycle conventions, language rules
+- [Security Policies](/reference/standards/security-policies-language-specific-security-rules-and-disclosure-endpoints): Security rules, disclosure
+
+## FAQ
+
+- [General](/faq/general): General questions about Matrix
+- [Users](/faq/users): Questions for end users
+- [Developers](/faq/developers): Questions for developers
+- [Ops](/faq/ops): Questions for operations
+- [Billing & PAX](/faq/billing-pax): Questions about billing and PAX credits
+- [Security](/faq/security): Security questions and policies
+
+## Optional
+
+- [Writing Guide: Pages](/writing/pages): How to write documentation pages
+- [Writing Guide: Components](/writing/components): Using MDX components
+- [Writing Guide: Code Blocks](/writing/code-blocks): Formatting code examples
+- [Components: Callouts](/components/callouts): Callout component reference
+- [Components: Cards](/components/cards): Card component reference
+- [Components: Steps](/components/steps): Steps component reference
+- [Components: Tabs & Accordions](/components/tabs-and-accordions): Tabs and accordion reference

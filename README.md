@@ -1,190 +1,84 @@
-# Jamdesk Starter Template
+# Matrix Documentation
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
+**Matrix** is the cognition and UX layer on [Paxeer Network](https://paxeer.app). It turns natural-language requests into typed, inspectable, replayable agent execution across two rails:
 
-The official starter template for [Jamdesk](https://jamdesk.com) documentation sites. Clone this repository to create beautiful, professional documentation in minutes.
+- **Neo** — the default conversational tool-calling agent for reversible work
+- **MCL** — the rigorous rail for monetary or irreversible work (NL → Intent IR → Plan → Walk)
 
-**[Documentation](https://jamdesk.com/docs)** · **[Get Started](https://jamdesk.com/docs/quickstart)** · **[Dashboard](https://dashboard.jamdesk.com)**
+This repository contains the official documentation for Matrix, hosted at [docs.matrixmcl.com](https://docs.matrixmcl.com).
 
-## What is Jamdesk?
+## What's Inside
 
-[Jamdesk](https://jamdesk.com) is a modern documentation platform that transforms MDX (Markdown + React components) into polished, production-ready documentation websites.
+### Core Modules
 
-**Why teams choose Jamdesk:**
-- **Write in MDX** - Markdown with React components for interactive docs
-- **Deploy instantly** - Push to GitHub, deploy globally in seconds
-- **Professional themes** - Three built-in themes (Jam, Nebula, Pulsar)
-- **AI-ready** - Auto-generates `llms.txt` for ChatGPT, Claude, Copilot
-- **Built-in search** - AI-powered search out of the box
-- **Analytics included** - Track page views and search queries
+Matrix is a polyglot monorepo of independently buildable Go modules plus MCP tool servers:
 
-## What's Included
+| Module | Role |
+|--------|------|
+| **mcl** | Compiler turning natural language into typed Intent IR |
+| **cortex** | Per-actor typed memory graph on Pebble DB |
+| **executor** | Plan walker, lifecycle machine, MCP tool dispatch |
+| **neo** | Default conversational agent with paged cortex memory |
+| **gateway** | Metered LLM proxy + PAX credit ledger |
+| **router** | Per-user Fly Machine provisioning + reverse proxy |
+| **deus** | Agent-service marketplace with EIP-712 receipts |
+| **layerx** | Settlement fabric and custody spine |
+| **chronos** | Agent scheduler and wake system |
+| **tachyon** | Agent-native Solidity/EVM engine |
+| **uwac** | Universal Web Agent Connector (OAuth vault → MCP tools) |
 
-This starter template includes everything you need to get started:
+### Documentation Structure
 
-```
-starter-docs/
-├── docs.json              # Site configuration (theme, colors, navigation)
-├── introduction.mdx       # Welcome page
-├── quickstart.mdx         # Getting started guide
-├── api-reference/         # API documentation example pages
-│   ├── openapi-example.mdx          # Live-rendered OpenAPI endpoint
-│   └── request-response-examples.mdx # Hand-authored request/response demo
-├── components/            # Component examples
-│   ├── callouts.mdx       # Notes, warnings, tips
-│   ├── cards.mdx          # Card layouts
-│   ├── steps.mdx          # Step-by-step guides
-│   └── tabs-and-accordions.mdx
-├── openapi/               # OpenAPI specification files
-│   └── example-api.yaml   # Sample Acme Support API spec
-└── writing/               # Content writing guides
-    ├── code-blocks.mdx    # Syntax highlighting
-    ├── components.mdx     # Using MDX components
-    └── pages.mdx          # Page structure
-```
+- **Get Started** — Introduction, quickstart, core concepts, glossary
+- **User Guide** — Chat interface, skills, wallet management
+- **Developer** — Architecture, module deep-dives, build/test/lint, contributing
+- **API Reference** — HTTP/SSE endpoints for all services
+- **MCP** — Model Context Protocol tool servers and agent manifests
+- **Reference** — Deep subsystem documentation (cortex, mcl, neo, chronos, tachyon, deus, layerx, skills, standards)
+- **FAQ** — Common questions for users, developers, ops, billing, security
 
-**Theme:** This template uses the **Jam** theme - a clean, modern design with purple accent colors. [See all themes →](https://jamdesk.com/docs/customization/theming)
+## Building the Docs
 
-## Quick Start
-
-### Option 1: Use the Dashboard (Recommended)
-
-1. Sign up at [dashboard.jamdesk.com](https://dashboard.jamdesk.com)
-2. Create a new project and select "Starter Template"
-3. Connect your GitHub repository
-4. Start editing - changes deploy automatically
-
-### Option 2: Use This Template
-
-Click the green **"Use this template"** button at the top of this page to create your own repository based on this starter.
-
-### Option 3: Clone and Deploy
+This documentation is built with [Jamdesk](https://jamdesk.com), a modern documentation platform.
 
 ```bash
-# Clone this template
-git clone https://github.com/jamdesk/starter-docs.git my-docs
-cd my-docs
-
-# Preview locally (requires Jamdesk CLI)
+# Install Jamdesk CLI
 npm install -g jamdesk
+
+# Build the site
+jamdesk build
+
+# Preview locally
 jamdesk dev
 
-# Open http://localhost:3000
+# Deploy to production
+jamdesk deploy
 ```
 
-Then connect your repository to Jamdesk via the [dashboard](https://dashboard.jamdesk.com).
+## For AI Agents
 
-## Customization
+This repository includes agent-friendly artifacts:
 
-### Change Theme Colors
+- **`llms.txt`** — Structured index with descriptions for LLM consumption
+- **`sitemap.txt`** — Flat list of all documentation paths
+- **`agent.txt`** — Agent manifest describing structure, navigation, and known issues
 
-Edit `docs.json` to customize your brand colors:
+When consuming these docs programmatically:
+1. Start with `/introduction`, `/concepts`, `/glossary` for the mental model
+2. Strip MDX components (`<Columns>`, `<Card>`, `<Tip>`, etc.) to extract plain text
+3. All code examples are in standard markdown code blocks
+4. Cross-references use absolute paths from root (`/path/to/page`)
 
-```json
-{
-  "colors": {
-    "primary": "#6366F1",
-    "light": "#818CF8",
-    "dark": "#4F46E5"
-  }
-}
-```
+## Contributing
 
-### Switch Themes
-
-Change the theme in `docs.json`:
-
-```json
-{
-  "theme": "jam"      // Options: "jam", "nebula", "pulsar"
-}
-```
-
-### Add Your Logo
-
-```json
-{
-  "logo": {
-    "light": "/images/logo-light.svg",
-    "dark": "/images/logo-dark.svg"
-  }
-}
-```
-
-## Writing Content
-
-All content is written in MDX - Markdown with React components:
-
-```mdx
----
-title: My Page
-description: A brief description for SEO
----
-
-# Welcome
-
-This is regular Markdown with **bold** and *italic* text.
-
-<Note>
-  This is a callout component for important information.
-</Note>
-
-<Steps>
-  <Step title="First">Do this first</Step>
-  <Step title="Second">Then do this</Step>
-</Steps>
-```
-
-**Available components:** Cards, Tabs, Accordions, Steps, Callouts, Code Groups, and [25+ more →](https://jamdesk.com/docs/components/overview)
-
-## Local Development
-
-Preview your docs locally with hot reload:
-
-```bash
-# Install the CLI (choose one)
-npm install -g jamdesk          # via npm
-brew install jamdesk/tap/jamdesk # via Homebrew
-
-# Start the dev server
-jamdesk dev
-
-# Validate your docs
-jamdesk validate
-
-# Check for broken links
-jamdesk broken-links
-```
-
-## Documentation
-
-- [Jamdesk Documentation](https://jamdesk.com/docs) - Full platform docs
-- [Quickstart Guide](https://jamdesk.com/docs/quickstart) - Get started in 5 minutes
-- [MDX Basics](https://jamdesk.com/docs/content/mdx-basics) - Writing content
-- [Components](https://jamdesk.com/docs/components/overview) - All available components
-- [Theming](https://jamdesk.com/docs/customization/theming) - Customize your site
-- [docs.json Reference](https://jamdesk.com/docs/config/docs-json-reference) - Full configuration options
-
-## Deploy
-
-Jamdesk handles deployment automatically:
-
-1. Push changes to your connected GitHub repository
-2. Jamdesk builds your site (typically under 30 seconds)
-3. Your docs are live on your custom domain or `yoursite.jamdesk.app`
-
-No build configuration required. No CI/CD setup needed.
-
-## Support
-
-- **Documentation:** [jamdesk.com/docs](https://jamdesk.com/docs)
-- **Help Center:** [jamdesk.com/docs/help](https://jamdesk.com/docs/help/faq)
-- **Issues:** [github.com/jamdesk/starter-docs/issues](https://github.com/jamdesk/starter-docs/issues)
+See [developer/contributing.mdx](developer/contributing.mdx) for ground rules, commit format, and PR workflow.
 
 ## License
 
-MIT - Use this template for any project, commercial or personal.
+See [LICENSE](LICENSE) for details.
 
----
+## Links
 
-Built with [Jamdesk](https://jamdesk.com) - Beautiful documentation that developers actually love.
+- **Documentation**: [docs.matrixmcl.com](https://docs.matrixmcl.com)
+- **Source Code**: [github.com/paxlabs-inc/matrix-core](https://github.com/paxlabs-inc/matrix-core)
+- **Paxeer Network**: [paxeer.app](https://paxeer.app)

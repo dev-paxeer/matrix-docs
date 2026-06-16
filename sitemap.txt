@@ -1,0 +1,158 @@
+# Matrix Documentation Sitemap
+# Generated from docs.json navigation and filesystem analysis
+# Base URL: https://docs.matrixmcl.com
+
+# === Get Started ===
+/introduction
+/quickstart
+/concepts
+/glossary
+
+# === User Guide ===
+/user-guide/chat
+/user-guide/skills
+/user-guide/wallet
+
+# === Developer ===
+/developer/architecture
+/developer/mcl
+/developer/cortex
+/developer/executor
+/developer/neo
+/developer/determinism-replay
+/developer/build-test-lint
+/developer/contributing
+/developer/deployment
+
+# === API Reference ===
+/api-reference/overview
+/api-reference/daemon
+/api-reference/gateway
+/api-reference/router
+/api-reference/chronos
+/api-reference/deus
+/api-reference/layerx
+/api-reference/uwac
+/api-reference/tachyon
+/api-reference/cli
+
+# === MCP (Model Context Protocol) ===
+/mcp/overview
+/mcp/agent-manifests
+/mcp/tool-servers
+/mcp/writing-a-tool-bridge
+/mcp/server-templates
+
+# === Reference: Cortex ===
+/reference/cortex/overview
+/reference/cortex/store-and-journal
+/reference/cortex/memory-taxonomy
+/reference/cortex/write-api
+/reference/cortex/find-query
+/reference/cortex/context-bundle
+/reference/cortex/embedder-and-vector
+/reference/cortex/edges-and-graph
+/reference/cortex/snapshot-and-proofs
+/reference/cortex/salience
+/reference/cortex/attest-and-compact
+/reference/cortex/scope
+/reference/cortex/replay
+
+# === Reference: MCL ===
+/reference/mcl/overview
+/reference/mcl/compiler-pipeline
+/reference/mcl/intent-ir
+/reference/mcl/envelope
+/reference/mcl/matrixscript
+/reference/mcl/skill-authoring
+/reference/mcl/mclc-cli
+/reference/mcl/llm-client
+
+# === Reference: Neo ===
+/reference/neo/overview
+/reference/neo/control-loop
+/reference/neo/memory-system
+/reference/neo/recall-lane
+/reference/neo/conversation-store
+/reference/neo/core-execute
+/reference/neo/writeback-consolidation
+/reference/neo/tool-surface
+/reference/neo/llm-client
+/reference/neo/config-system
+
+# === Reference: Chronos ===
+/reference/chronos/overview
+/reference/chronos/architecture
+/reference/chronos/api-reference
+/reference/chronos/auth-system
+/reference/chronos/config-system
+/reference/chronos/data-model
+/reference/chronos/dispatch-worker
+/reference/chronos/schedule-engine
+/reference/chronos/tool-surface
+/reference/chronos/wake-delivery
+
+# === Reference: Tachyon ===
+/reference/tachyon/overview
+/reference/tachyon/daemon
+/reference/tachyon/api-server
+/reference/tachyon/rpc-server
+/reference/tachyon/mcp-server
+/reference/tachyon/compiler
+/reference/tachyon/engine
+/reference/tachyon/abi-encoder
+/reference/tachyon/evm-client
+/reference/tachyon/deployer
+/reference/tachyon/wallet
+/reference/tachyon/registry
+/reference/tachyon/simulate
+/reference/tachyon/tester
+/reference/tachyon/chains
+/reference/tachyon/config
+/reference/tachyon/types
+
+# === Reference: Deus ===
+/reference/deus/service-entrypoints-api-server-docs-and-schema-migrations
+/reference/deus/discovery-extraction-embedding-and-index-construction
+/reference/deus/receipts-vouchers-metering-channels-and-storage
+/reference/deus/chain-access-auth-wallet-clients-registries-and-manifests
+/reference/deus/hosting-backends-and-budget-controls
+/reference/deus/solidity-contracts-deployment-scripts-and-end-to-end-protocol-tests
+
+# === Reference: LayerX ===
+/reference/layerx/layerx-daemon-auth-chain-accumulator-store-ledger-and-types
+/reference/layerx/settlementanchor-ierc20-eip712-safeerc20-and-deployment-contracts
+/reference/layerx/forge-std-integration-fixtures-and-solidity-test-support
+
+# === Reference: Skills ===
+/reference/skills/agent-engineering-api-design-architecture-and-evaluation-skills
+/reference/skills/planning-review-qa-code-quality-cli-and-performance-skills
+/reference/skills/react-design-design-system-styling-and-technical-writing-skills
+/reference/skills/brand-self-improvement-continuous-learning-commit-writing-and-coding-patterns-skills
+/reference/skills/ck-command-tooling-agent-manifests-and-index-building-assets
+
+# === Reference: Standards & Security ===
+/reference/standards/contribution-workflow-code-review-changelog-and-licenses
+/reference/standards/testing-rules-and-project-specific-qa-guidance
+/reference/standards/patterns-architecture-heuristics-and-performance-guidance
+/reference/standards/hook-and-lifecycle-conventions-across-language-rule-sets
+/reference/standards/security-policies-language-specific-security-rules-and-disclosure-endpoints
+
+# === FAQ ===
+/faq/general
+/faq/users
+/faq/developers
+/faq/ops
+/faq/billing-pax
+/faq/security
+
+# === Writing Guide (internal) ===
+/writing/pages
+/writing/components
+/writing/code-blocks
+
+# === Components Reference (internal) ===
+/components/callouts
+/components/cards
+/components/steps
+/components/tabs-and-accordions
