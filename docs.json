@@ -126,6 +126,143 @@
         ]
       },
       {
+        "tab": "Reference",
+        "icon": "book-bookmark",
+        "groups": [
+          {
+            "group": "Cortex",
+            "icon": "database",
+            "pages": [
+              "reference/cortex/overview",
+              "reference/cortex/store-and-journal",
+              "reference/cortex/memory-taxonomy",
+              "reference/cortex/write-api",
+              "reference/cortex/find-query",
+              "reference/cortex/context-bundle",
+              "reference/cortex/embedder-and-vector",
+              "reference/cortex/edges-and-graph",
+              "reference/cortex/snapshot-and-proofs",
+              "reference/cortex/salience",
+              "reference/cortex/attest-and-compact",
+              "reference/cortex/scope",
+              "reference/cortex/replay"
+            ]
+          },
+          {
+            "group": "MCL",
+            "icon": "diagram-project",
+            "pages": [
+              "reference/mcl/overview",
+              "reference/mcl/compiler-pipeline",
+              "reference/mcl/intent-ir",
+              "reference/mcl/envelope",
+              "reference/mcl/matrixscript",
+              "reference/mcl/skill-authoring",
+              "reference/mcl/mclc-cli",
+              "reference/mcl/llm-client"
+            ]
+          },
+          {
+            "group": "Neo",
+            "icon": "comments",
+            "pages": [
+              "reference/neo/overview",
+              "reference/neo/control-loop",
+              "reference/neo/memory-system",
+              "reference/neo/recall-lane",
+              "reference/neo/conversation-store",
+              "reference/neo/core-execute",
+              "reference/neo/writeback-consolidation",
+              "reference/neo/tool-surface",
+              "reference/neo/llm-client",
+              "reference/neo/config-system"
+            ]
+          },
+          {
+            "group": "Chronos",
+            "icon": "clock",
+            "pages": [
+              "reference/chronos/overview",
+              "reference/chronos/architecture",
+              "reference/chronos/api-reference",
+              "reference/chronos/auth-system",
+              "reference/chronos/config-system",
+              "reference/chronos/data-model",
+              "reference/chronos/dispatch-worker",
+              "reference/chronos/schedule-engine",
+              "reference/chronos/tool-surface",
+              "reference/chronos/wake-delivery"
+            ]
+          },
+          {
+            "group": "Tachyon",
+            "icon": "bolt",
+            "pages": [
+              "reference/tachyon/overview",
+              "reference/tachyon/daemon",
+              "reference/tachyon/api-server",
+              "reference/tachyon/rpc-server",
+              "reference/tachyon/mcp-server",
+              "reference/tachyon/compiler",
+              "reference/tachyon/engine",
+              "reference/tachyon/abi-encoder",
+              "reference/tachyon/evm-client",
+              "reference/tachyon/deployer",
+              "reference/tachyon/wallet",
+              "reference/tachyon/registry",
+              "reference/tachyon/simulate",
+              "reference/tachyon/tester",
+              "reference/tachyon/chains",
+              "reference/tachyon/config",
+              "reference/tachyon/types"
+            ]
+          },
+          {
+            "group": "Deus",
+            "icon": "store",
+            "pages": [
+              "reference/deus/service-entrypoints-api-server-docs-and-schema-migrations",
+              "reference/deus/discovery-extraction-embedding-and-index-construction",
+              "reference/deus/receipts-vouchers-metering-channels-and-storage",
+              "reference/deus/chain-access-auth-wallet-clients-registries-and-manifests",
+              "reference/deus/hosting-backends-and-budget-controls",
+              "reference/deus/solidity-contracts-deployment-scripts-and-end-to-end-protocol-tests"
+            ]
+          },
+          {
+            "group": "LayerX",
+            "icon": "layer-group",
+            "pages": [
+              "reference/layerx/layerx-daemon-auth-chain-accumulator-store-ledger-and-types",
+              "reference/layerx/settlementanchor-ierc20-eip712-safeerc20-and-deployment-contracts",
+              "reference/layerx/forge-std-integration-fixtures-and-solidity-test-support"
+            ]
+          },
+          {
+            "group": "Skills",
+            "icon": "wand-magic-sparkles",
+            "pages": [
+              "reference/skills/agent-engineering-api-design-architecture-and-evaluation-skills",
+              "reference/skills/planning-review-qa-code-quality-cli-and-performance-skills",
+              "reference/skills/react-design-design-system-styling-and-technical-writing-skills",
+              "reference/skills/brand-self-improvement-continuous-learning-commit-writing-and-coding-patterns-skills",
+              "reference/skills/ck-command-tooling-agent-manifests-and-index-building-assets"
+            ]
+          },
+          {
+            "group": "Standards & Security",
+            "icon": "shield-halved",
+            "pages": [
+              "reference/standards/contribution-workflow-code-review-changelog-and-licenses",
+              "reference/standards/testing-rules-and-project-specific-qa-guidance",
+              "reference/standards/patterns-architecture-heuristics-and-performance-guidance",
+              "reference/standards/hook-and-lifecycle-conventions-across-language-rule-sets",
+              "reference/standards/security-policies-language-specific-security-rules-and-disclosure-endpoints"
+            ]
+          }
+        ]
+      },
+      {
         "tab": "FAQ",
         "icon": "circle-question",
         "groups": [
