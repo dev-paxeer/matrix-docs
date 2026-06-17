@@ -1,9 +1,9 @@
 {
   "$schema": "https://jamdesk.com/docs.json",
-  "name": "Matrix",
+  "name": "MatrixOS",
   "theme": "jam",
   "colors": {
-    "primary": "#F54E00",
+    "primary": "#004CED",
     "light": "#FF7A45",
     "dark": "#D44400"
   },
