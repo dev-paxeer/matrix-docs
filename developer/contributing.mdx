@@ -5,17 +5,17 @@ description: "Ground rules, branching and conventional commits, quality gates, p
 
 Matrix is design-doc-driven and its surfaces are load-bearing. This page covers the discipline expected of every patch.
 
-<Warning>
 Reporting a security issue? **Stop** and follow [`SECURITY.md`](https://github.com/paxlabs-inc/matrix-core/blob/main/SECURITY.md) instead of opening a public PR.
-</Warning>
 
 ## Ground rules
 
-1. **No silent design changes.** Locked decisions live in `research/00-decisions.md` (D1–D18) and per-phase Q-locks in `knowledge/matrix.kvx`. Moving a locked decision must be explicit.
-2. **Replay determinism is load-bearing.** Any `cortex/` change touching mutation paths must preserve a byte-identical `OverallRoot` under `cortex-shell rebuild -verify-only`. The §13.4 invariant is non-negotiable.
-3. **Closed vocabularies are closed.** The 10-verb (D7) and 8-`obj_kind` enums are not extension points — adding one is a journaled migration with a schema-version bump.
+1. **No silent design changes.** Locked decisions live in `research/00-decisions.md` (D1-D18) and per-phase Q-locks in `knowledge/matrix.kvx`. Moving a locked decision must be explicit.
+2. **Replay determinism is load-bearing.** Any `cortex/` change touching mutation paths must preserve a byte-identical `OverallRoot` under `cortex-shell rebuild -verify-only`. The section 13.4 invariant is non-negotiable.
+3. **Closed vocabularies are closed.** The 10-verb (D7) and 8-`obj_kind` enums are not extension points; adding one is a journaled migration with a schema-version bump.
 4. **No new dependencies without justification.** The modules ship deliberately small dep graphs.
 5. **Public surfaces are stable.** If you add an exported Go symbol, you own its compatibility story.
+6. **Agent manifests are exhaustive.** The `tools` field in `agents/*.json` must enumerate every tool the MCP server advertises. The executor rejects drift at boot (design decision Q21).
+7. **Package digests are pinned.** Every MCP server entry must carry a `package_digest` with the sha256 of the published package (design decision Q22). Placeholder zero-filled digests are for bootstrap testing only.
 
 ## Branching & commits
 
@@ -24,7 +24,7 @@ Flat trunk model on `main`. Branches are `<who>/<short-slug>`. Commits follow Co
 ```text
 <type>(<scope>): <summary>
 
-<optional body — wrap at 80 columns>
+<optional body, wrap at 80 columns>
 
 Refs: matrix.kvx <phase_status>
 ```
@@ -32,7 +32,7 @@ Refs: matrix.kvx <phase_status>
 - **Types:** `feat`, `fix`, `refactor`, `perf`, `test`, `docs`, `build`, `ci`, `chore`, `revert`.
 - **Scopes:** `cortex`, `mcl`, `bridge`, `executor` (code); `deploy`, `skills`, `agents`, `rules`, `research`, `knowledge`, `tools`, `journal` (non-code); `ci`, `meta` (plumbing).
 
-Sign commits with `git commit -S` — preferred for anything touching `cortex/snapshot/`, `cortex/store/`, `MCL/envelope/`, or `deploy/`.
+Sign commits with `git commit -S` - preferred for anything touching `cortex/snapshot/`, `cortex/store/`, `MCL/envelope/`, or `deploy/`.
 
 ## Quality gates
 
@@ -42,29 +42,29 @@ Every PR must pass `make ci` (gofmt + `go vet` + `go test -race -count=1`) and `
 
 | Module | Convention |
 | --- | --- |
-| `cortex/` | One Pebble DB per actor; every mutation goes through `store.BeginWrite`; no new top-level package without a `matrix.kvx` phase entry. |
-| `MCL/` | Stdlib-only outside `llm/`; lexer/parser changes keep `grammar.bnf` in sync; new syntax extends `spec.md` first. |
-| `bridge/` | Stateless adapter; `WithLateBinding(true)` is opt-in. |
-| `executor/` | `runtime/walker.go` is canonical; tool URIs version-pinned at parse time; MCP credentials are `$env:NAME` refs. |
-| `deploy/` | Images install everything at build time (no runtime installs); `entrypoint.sh` and `bootstrap.sh` are idempotent. |
+| `cortex/` | One Pebble DB per actor; every mutation goes through `store.BeginWrite`; no new top-level package without a `matrix.kvx` phase entry |
+| `MCL/` | Stdlib-only outside `llm/`; lexer/parser changes keep `grammar.bnf` in sync; new syntax extends `spec.md` first |
+| `bridge/` | Stateless adapter; `WithLateBinding(true)` is opt-in |
+| `executor/` | `runtime/walker.go` is canonical; tool URIs version-pinned at parse time; MCP credentials are `$env:NAME` refs; agent manifests loaded at boot |
+| `deploy/` | Images install everything at build time (no runtime installs); `entrypoint.sh` and `bootstrap.sh` are idempotent |
+| `agents/` | JSON manifests exhaustively enumerate tools; `package_digest` must be real sha256 before production; literal credentials forbidden |
 
 ## Pull request process
 
-<Steps>
-  <Step title="Open a draft early">
-    Even a stub PR with the description filled in beats a surprise patch. Tick the affected-modules boxes so reviewers can route by `CODEOWNERS`.
-  </Step>
-  <Step title="Paste verification output">
-    `make ci`, smoke transcripts, or relevant snippets — prove the change does what it says.
-  </Step>
-  <Step title="Keep it scoped">
-    One concern per PR; split refactors from behavior changes. Respond to review with fix-up commits (don't rewrite history mid-review).
-  </Step>
-  <Step title="Squash on merge">
-    History on `main` is one commit per landed PR.
-  </Step>
-</Steps>
+1. **Open a draft early.** Even a stub PR with the description filled in beats a surprise patch. Tick the affected-modules boxes so reviewers can route by `CODEOWNERS`.
+2. **Paste verification output.** `make ci`, smoke transcripts, or relevant snippets prove the change does what it says.
+3. **Keep it scoped.** One concern per PR; split refactors from behavior changes. Respond to review with fix-up commits (don't rewrite history mid-review).
+4. **Squash on merge.** History on `main` is one commit per landed PR.
 
 ## Design changes
 
-Anything that moves a locked decision (D1–D18 + phase Q-locks) requires a design-review PR before code lands: update the relevant `research/` chapter, add the new Q-lock to `matrix.kvx`, and answer *what changes, why now, what it supersedes, and the migration plan*. Journaled schema bumps (cortex SMT, envelope schema, IR canonical JSON) must include a migration test covering both directions.
+Anything that moves a locked decision (D1-D18 + phase Q-locks) requires a design-review PR before code lands: update the relevant `research/` chapter, add the new Q-lock to `matrix.kvx`, and answer *what changes, why now, what it supersedes, and the migration plan*. Journaled schema bumps (cortex SMT, envelope schema, IR canonical JSON) must include a migration test covering both directions.
+
+## Executor and agent manifest changes
+
+Changes to the executor module or agent manifests carry additional requirements:
+
+- New MCP server entries in `agents/*.json` need real `package_digest` values and exhaustive `tools` lists.
+- Changes to `executor/tool/manifest.go` types (`AgentManifest`, `ServerEntry`, `ToolEntry`, `NativeToolEntry`) require updating the production checklist in `agents/README.md`.
+- The `native_tools` field is a reserved slot for chain tools (v1.1); do not populate it in v1.
+- MCP credentials must use `$env:NAME` refs; literal credentials in manifest files are forbidden.

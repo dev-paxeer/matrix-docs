@@ -1,15 +1,15 @@
 ---
 title: Determinism & Replay
-description: "The byte-identical replay invariant that makes Matrix auditable — canonical encodings, the D11 compilation seed, DropDerived/Rebuild, and the replay-invariant CI gate."
+description: "The byte-identical replay invariant that makes Matrix auditable, canonical encodings, the D11 compilation seed, DropDerived/Rebuild, and the replay-invariant CI gate."
 ---
 
 Determinism is the property that makes the whole stack auditable: given the same inputs, Matrix produces byte-identical artifacts, and all derived state can be rebuilt from the journal.
 
 ## Canonical encodings
 
-- **AST hashing** — the MCL canonical hash excludes comments, blank lines, and `§HASH`, so reformatting never changes a skill's digest.
-- **Intent IR** — hashed via canonical JSON + sha256; the hash is content-addressing for the Intent.
-- **Memory & envelopes** — canonical CBOR for journal entries and signed envelopes (ed25519), so the same logical record always serializes identically.
+- **AST hashing** - the MCL canonical hash excludes comments, blank lines, and `HASH`, so reformatting never changes a skill's digest.
+- **Intent IR** - hashed via canonical JSON + sha256; the hash is content-addressing for the Intent.
+- **Memory & envelopes** - canonical CBOR for journal entries and signed envelopes (ed25519), so the same logical record always serializes identically.
 
 ## The D11 compilation seed
 
@@ -21,33 +21,17 @@ seed = sha256(intent.id || actor || cortex_snapshot_hash || mtx_digest || model_
 
 The grammar-constrained decode runs at `temperature=0`, `seed=42` against the pinned compiler model, with `CompileMetadata` capturing the mtx digest, model digest, grammar, skill id/version, and cortex snapshot hash.
 
-## The replay invariant (§13.4)
+## The replay invariant (section 13.4)
 
 The defining correctness property of cortex: **drop all derived state, rebuild from the journal, and the `OverallRoot` must be byte-identical.**
 
-<Steps>
-  <Step title="Capture">
-    `cortex-shell rebuild -verify-only` records `Pre = OverallRoot()`.
-  </Step>
-  <Step title="Drop derived">
-    `DropDerived` deletes `vec/`, `idx/`, `salience/`, `accum/`, plus the two `meta/embed_*` cursors.
-  </Step>
-  <Step title="Rebuild">
-    Walk `m/` heads, `e/from/` edges, and `j/<seq>` journal entries in order, re-emitting every derived index and SMT/MMR entry.
-  </Step>
-  <Step title="Verify">
-    Compute `Post = OverallRoot()` and require `Pre == Post`. Any drift is a bug.
-  </Step>
-</Steps>
+1. **Capture**: `cortex-shell rebuild -verify-only` records `Pre = OverallRoot()`.
+2. **Drop derived**: `DropDerived` deletes `vec/`, `idx/`, `salience/`, `accum/`, plus the two `meta/embed_*` cursors.
+3. **Rebuild**: Walk `m/` heads, `e/from/` edges, and `j/<seq>` journal entries in order, re-emitting every derived index and SMT/MMR entry.
+4. **Verify**: Compute `Post = OverallRoot()` and require `Pre == Post`. Any drift is a bug.
 
-<Note>
 This runs on every PR via the `replay-invariant` CI job. Any change to a `cortex/` mutation path must extend `rebuild_test.go` to cover the new surface.
-</Note>
 
 ## Why it matters
 
 Because derived indexes (vector, salience, SMT/MMR) are reproducible from the append-only journal, the journal alone is the authoritative record. That makes per-user state portable (snapshot the journal, rebuild anywhere) and makes every execution independently verifiable.
-
-<Card title="Cortex internals" icon="database" href="/developer/cortex">
-  The store, journal, and snapshot machinery behind the invariant.
-</Card>

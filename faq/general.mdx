@@ -1,22 +1,38 @@
 ---
 title: General FAQ
-description: "High-level questions about Matrix — what it is, the two rails, how it relates to Paxeer, and why it uses typed intents."
+description: "High-level questions about Matrix: what it is, how the three layers work, how it relates to Paxeer, and why it uses typed intents."
 ---
 
 <AccordionGroup>
   <Accordion title="What is Matrix?">
-    Matrix is the cognition and UX layer on top of Paxeer Network. It turns natural-language requests into a typed, inspectable, correctable Intent IR that an agent can execute — avoiding prompt fragility, intent loss, missing shared ontology, and unstructured correction.
+    Matrix is the cognition layer built for the Paxeer Network. It extends language models beyond conversation into real execution: agent-to-agent on-chain financial coordination, high-risk task execution, and safe handling of critical, confidential work. It compiles natural language into typed, inspectable Intents that an agent can execute without the ambiguity of human reasoning leaking into the parts that must be exact.
   </Accordion>
-  <Accordion title="What are the two rails?">
-    **Neo** is the default conversational rail for reversible work. The **MCL pipeline** is the rigorous rail that compiles prose into a typed plan and walks it deterministically — used for monetary or irreversible work. Both share one memory + execution substrate.
+
+  <Accordion title="What are the three layers of Matrix?">
+    **1. The Matrix Compiler (MCL):** A cohort of three rigorous agents that communicate, plan, and act over a closed-verb protocol. Handles money, irreversible operations, and confidential tasks with machine exactness.
+
+    **2. Cortex:** A per-actor typed memory engine with an append-only journal, Merkle-anchored snapshots, and byte-deterministic replay. Gives every agent persistent, durable memory.
+
+    **3. The Loop Manager:** The per-agent runtime that coordinates the exchange between user, LLM, and Cortex, and escalates to MCL the moment work becomes consequential.
   </Accordion>
+
+  <Accordion title="What is Neo and how does it relate to MCL?">
+    Neo is the default conversational agent. It runs inside the Loop Manager with tools like shell, code execution, fetch, browser, web search, and chain access available for reversible work. The instant stakes rise (money moves, a signature is needed, an irreversible write), the Loop Manager escalates to MCL through `core_execute`. Control returns to Neo once rigor is no longer required. Both share one memory and execution substrate.
+  </Accordion>
+
   <Accordion title="Why typed intents instead of just prompting?">
-    A typed Frame (closed verbs, typed objects, constraints, success criteria) survives multi-step execution and can be corrected structurally. Plain prompts drift; a typed intent is content-addressed, signable, and replayable.
+    Human language is a leaky channel. It works for chat, but not when an agent is moving funds, performing irreversible writes, or handling confidential data. A typed Frame (closed verbs, typed objects, constraints, success criteria) survives multi-step execution and can be corrected structurally. Plain prompts drift; a typed intent is content-addressed, signable, and replayable.
   </Accordion>
+
   <Accordion title="How does Matrix relate to Paxeer?">
-    Paxeer Network (Chain ID 125) is the underlying chain and economy. Matrix is the agent layer above it: it meters usage in PAX, settles agent balances via LayerX, and reaches the chain through the `paxeer-net` MCP server.
+    Paxeer Network (Chain ID 125) is the underlying L1 blockchain: 400ms blocks, 400ms finality, purpose-built for agentic workloads. Matrix is the agent layer above it. Matrix meters LLM usage in PAX, settles agent balances via LayerX, and reaches the chain through the `paxeer-net` MCP server. The Paxeer Embedded Wallet handles custody and spend policy at the network layer.
   </Accordion>
+
+  <Accordion title="What is the closed-verb protocol?">
+    MCL agents coordinate over 10 closed verbs (`find`, `acquire`, `build`, `modify`, `deliver`, `analyze`, `negotiate`, `schedule`, `monitor`, `delegate`) and 8 closed object kinds (`service`, `model`, `agent`, `knowledge`, `intent`, `asset`, `plan`, `capability`). This ensures intent between agents is exact, never inferred at runtime from prose. The vocabularies are closed by design; adding a new verb or object kind is a journaled migration with an explicit schema-version bump.
+  </Accordion>
+
   <Accordion title="Is Matrix open source?">
-    It's source-available under the Matrix-Protocol License: read, use, deploy, and integrate freely; redistribute modifications under the same license. A commercial license applies past defined revenue/liquidity thresholds.
+    Matrix Core is source-available under the Matrix-Protocol License. You can read, use, deploy, and integrate it freely. If you modify and redistribute the software, you must release your changes under the same license. A commercial license from PaxLabs Inc. is required once you exceed defined revenue or liquidity thresholds (USD 100,000 in fees or USD 10,000,000 in liquidity under control in any 12-month period).
   </Accordion>
 </AccordionGroup>

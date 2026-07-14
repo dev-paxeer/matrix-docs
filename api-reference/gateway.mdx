@@ -1,51 +1,114 @@
 ---
 title: Gateway API
-description: "The metered, OpenAI-compatible LLM proxy — chat completions and embeddings, priced per model against a versioned PAX rate card and debited from a per-user credit ledger."
+description: "The metered, OpenAI-compatible LLM proxy: chat completions and embeddings, priced per model against a versioned PAX rate card and debited from a per-user credit ledger."
 ---
 
-The **gateway** is an OpenAI-compatible LLM proxy that meters every call: it prices the request against a versioned rate card, debits a per-user PAX credit ledger, then forwards to the upstream provider.
+The **gateway** is an OpenAI-compatible LLM proxy that meters every call. It prices the request against a versioned rate card, debits a per-user PAX credit ledger, then forwards to the upstream provider (Fireworks or Together).
+
+## Wire shape
+
+```
+client -> https://matrix.paxeer.app/gw/v1/chat/completions
+nginx  -> http://127.0.0.1:9090/v1/chat/completions   (strips /gw/)
+gw     -> upstream Fireworks / Together
+```
 
 ## Routes
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| GET | `/healthz` | Liveness. |
-| POST | `/v1/chat/completions` | OpenAI-compatible chat completion (metered). |
-| POST | `/v1/embeddings` | Embeddings (input-only pricing; metered). |
+| POST | `/v1/chat/completions` | OpenAI-compatible chat completion (metered) |
+| POST | `/v1/embeddings` | OpenAI-compatible embeddings (input-only pricing; metered) |
+| GET | `/healthz` | Unauthenticated liveness |
+
+## Required headers
+
+| Header | Required | Meaning |
+| --- | --- | --- |
+| `Authorization` | always | `Bearer ${MATRIX_GATEWAY_TOKEN}` |
+| `X-Matrix-Actor-DID` | always | Wallet/DID; ledger key |
+| `X-Matrix-Slot` | always | `compiler` / `planner` / `executor` |
+| `X-Matrix-Intent-ID` | optional | For cost-by-intent rollups |
+| `X-Matrix-Goal-ID` | optional | For cost-by-goal rollups |
+| `X-Matrix-Kind-Route` | optional | Executor sub-route (`reason`, `code`, etc.) |
+| `X-Matrix-BYO-API-Key` | optional | `true` to bypass metering |
+| `X-Matrix-User-API-Key` | BYO-only | Caller's own provider API key |
+
+## Response headers
+
+| Response header | Meaning |
+| --- | --- |
+| `X-Matrix-Cost-Pax` | This call's cost (PAX, fixed-12) |
+| `X-Matrix-Daily-Spent-Pax` | Actor's running daily spend |
+| `X-Matrix-Daily-Remaining-Pax` | Actor's daily-cap headroom |
+| `X-Matrix-Rate-Table-Version` | `rates.RateTableVersion` |
 
 ## Metering model
 
 <Steps>
   <Step title="Price">
-    The model id is looked up in the versioned rate card (`RateTableVersion`). PAX rates are derived from USD provider prices at a fixed PAX reference.
+    The model ID is looked up in the versioned rate card (`RateTableVersion`). PAX rates are derived from USD provider prices at a fixed PAX reference.
   </Step>
   <Step title="Gate">
-    Free-tier callers are restricted to a per-slot model whitelist and a daily PAX cap. Other models require `X-Matrix-BYO-API-Key`.
+    Free-tier callers are restricted to a per-slot model whitelist and a daily PAX cap (default 10 PAX). Other models return `403 model_not_whitelisted`. BYO bypasses the whitelist AND skips metering.
   </Step>
   <Step title="Debit">
     Token usage is priced and written to the `credit_ledger`, recording the `rate_table_v` so historical rows replay byte-identically after a reprice.
   </Step>
 </Steps>
 
-<Info>
-Every ledger row records the rate-table version that priced it, so historical costs remain auditable and reproducible even after the rate card is bumped.
-</Info>
+### Free-tier whitelist
+
+All model IDs are prefixed `accounts/fireworks/models/`.
+
+| Slot | Allowed models | Notes |
+| --- | --- | --- |
+| `compiler` | `gpt-oss-120b`, `deepseek-v4-pro` | `v4-pro` is the low-confidence escalation target |
+| `planner` | `gpt-oss-120b`, `deepseek-v4-flash`, `deepseek-v4-pro` | V1 pins planner = `v4-pro` via `MATRIX_PLANNER_MODEL` |
+| `executor` | `deepseek-v4-flash`, `kimi-k2.6` | V1 pins executor = `kimi-k2.6` via `MATRIX_EXECUTOR_MODEL` |
+
+### Budget hard-stop
+
+On every metered call the gateway:
+
+1. Reads the actor's daily spend from `credit_ledger`.
+2. Reads the actor's daily cap from `daily_budget_caps` (default 10 PAX).
+3. If spend + projected cost > cap, returns `429 budget_exhausted`:
+   ```json
+   {"error": "budget_exhausted", "spent_pax": "...", "limit_pax": "..."}
+   ```
+4. Otherwise forwards upstream. On 2xx, debits ledger and stamps response headers.
+5. On non-2xx upstream, forwards body verbatim with no debit.
+
+## Streaming
+
+`stream=true` requests pipe the SSE response through unmodified. The trailing `usage` chunk (emitted by both Fireworks and Together) is scanned out of the stream and used to debit the ledger. Cost headers are NOT added on streaming responses because the 200 status is flushed before upstream emits the usage trailer.
+
+## Kill switches
+
+- `MATRIX_GATEWAY_DISABLED=true` env returns 503 to every request, including `/healthz`. Restart to clear.
+- `daily_budget_caps.daily_pax_max=0` for an actor returns 429 instantly on all their calls.
+- `-postgres-uri=""` uses an in-memory ledger (local-dev only; no cross-process persistence).
 
 ## Chat completions
 
 <RequestExample>
 ```bash cURL
-curl -X POST https://gateway.example/v1/chat/completions \
-  -H "Authorization: Bearer $MATRIX_TOKEN" \
+curl -X POST https://matrix.paxeer.app/gw/v1/chat/completions \
+  -H "Authorization: Bearer $MATRIX_GATEWAY_TOKEN" \
+  -H "X-Matrix-Actor-DID: did:matrix:user-id:keyfp" \
+  -H "X-Matrix-Slot: executor" \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "accounts/fireworks/models/gpt-oss-120b",
+    "model": "accounts/fireworks/models/kimi-k2.6",
     "messages": [{"role": "user", "content": "Hello"}]
   }'
 ```
 </RequestExample>
 
-The response is the standard OpenAI chat-completion shape. Cost accounting happens server-side; inspect the credit ledger for the debited PAX amount and the `rate_table_v` used.
+<Info>
+Every ledger row records the rate-table version that priced it, so historical costs remain auditable and reproducible even after the rate card is bumped.
+</Info>
 
 <Card title="Pricing & PAX" icon="coins" href="/faq/billing-pax">
   How PAX, the rate card, and the free tier work.

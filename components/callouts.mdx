@@ -1,30 +1,30 @@
 ---
 title: Callouts
-description: "Draw attention to important information with Note, Tip, Warning, Danger, and Check callouts. Supports custom titles and rich Markdown content."
+description: "Draw attention to important information with Note, Info, Tip, Warning, Danger, and Check callout types. Supports custom titles and rich Markdown content."
 ---
 
-Callouts draw attention to key information.
+Callouts draw attention to key information. Use the lightest type that conveys the urgency.
 
 ## Types
 
 <Note>
-Helpful context or additional information.
+Helpful context or supplementary information that enhances understanding.
 </Note>
 
 <Info>
-Neutral information or supplementary facts.
+Neutral information or supplementary facts worth highlighting.
 </Info>
 
 <Tip>
-Best practices or optimization suggestions.
+Best practices, optimization suggestions, or "pro tips."
 </Tip>
 
 <Warning>
-Important caveats or requirements.
+Important caveats, requirements, or things that could cause issues if overlooked.
 </Warning>
 
 <Danger>
-Critical warnings — actions that could cause data loss.
+Critical warnings about actions that could cause data loss, security issues, or irreversible damage.
 </Danger>
 
 <Check>
@@ -33,24 +33,50 @@ Success confirmations or completed steps.
 
 ## Usage
 
+Wrap your content in the callout component. No imports needed:
+
 ```mdx
 <Note>
-Helpful context or additional information.
+Helpful context or supplementary information.
 </Note>
 
 <Warning>
 Important caveats or requirements.
 </Warning>
+
+<Danger>
+Critical warnings about destructive actions.
+</Danger>
 ```
 
-## With custom title
+## Custom titles
+
+Add a `title` prop to override the default heading:
 
 <Note title="Did you know?">
-You can use **Markdown** inside callouts, including `code` and [links](/introduction).
+You can use **Markdown** inside callouts, including `inline code`, [links](/mcp/overview), and lists.
+
+- First item
+- Second item
 </Note>
 
 ```mdx
 <Note title="Did you know?">
-You can use **Markdown** inside callouts.
+You can use **Markdown** inside callouts, including `inline code` and [links](/mcp/overview).
 </Note>
 ```
+
+## Choosing the right type
+
+| Type | When to use |
+| --- | --- |
+| `Note` | Additional context that helps but is not required. |
+| `Info` | Neutral facts or supplementary details. |
+| `Tip` | Best practices, shortcuts, or recommendations. |
+| `Warning` | Requirements, caveats, or common pitfalls. |
+| `Danger` | Destructive or irreversible actions. |
+| `Check` | Success states, completed steps, or confirmations. |
+
+<Tip>
+Reach for `Warning` and `Danger` sparingly so they keep their weight. If everything is urgent, nothing is.
+</Tip>

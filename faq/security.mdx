@@ -1,22 +1,38 @@
 ---
 title: Security FAQ
-description: "Security questions — credential handling, spend caps on chain, auditability, signed envelopes, and how to report a vulnerability."
+description: "Security questions: credential handling, spend caps, auditability, signed envelopes, tool access control, and vulnerability reporting."
 ---
 
 <AccordionGroup>
   <Accordion title="How are credentials handled?">
-    MCP server credentials are `$env:NAME` references resolved from the executor's environment at spawn time. Literal secrets in a manifest are forbidden — manifests are content-addressed and may be shared or journaled.
+    MCP server credentials are `$env:NAME` references in the agent manifest's `env` or `headers` fields. The executor resolves them from its own process environment at spawn time. Literal secrets in the manifest file are forbidden because manifests are content-addressed and may be shared across operators or journaled into Cortex event memories. The Paxeer Embedded Wallet handles chain-side custody; spend policy is enforced at the network layer, never trusted to agent code.
   </Accordion>
+
   <Accordion title="What stops an agent from overspending on chain?">
-    Two gates: a per-call ceiling (`PAXEER_SPEND_CAP_WEI`) enforced at plan time before any side effect, and the Paxeer Embedded Wallet's own spend policy at signing time. Without wallet auth, chain access is read-only.
+    Two independent gates. First, a per-call ceiling (`PAXEER_SPEND_CAP_WEI`) enforced at plan time before any side effect. Second, the Paxeer Embedded Wallet's own spend policy enforced at signing time. Without wallet authentication, chain access is read-only. For LayerX, separate per-call and daily spend leashes (`LAYERX_MAX_SPEND_USDX`, `LAYERX_MAX_DAILY_USDX`) gate every USDX outflow.
   </Accordion>
+
+  <Accordion title="What stops an agent from overspending on LLM calls?">
+    The gateway enforces a daily PAX hard-stop per actor. On every metered call, it reads the actor's running daily spend from the `credit_ledger`, compares it to the daily cap (default 10 PAX), and returns `429 budget_exhausted` if the projected cost would exceed the limit. Setting an actor's cap to 0 instantly blocks all their metered calls.
+  </Accordion>
+
   <Accordion title="Is execution auditable?">
-    Yes. Every lifecycle transition is an ed25519-signed envelope, every step journals a cortex Event, and the append-only journal can rebuild all derived state byte-identically. Outcomes are attested with the memories they cited.
+    Yes. Every lifecycle transition is an ed25519-signed envelope. Every step journals a Cortex event. The append-only journal can rebuild all derived state byte-identically (the replay invariant). Outcomes are attested with the memories they cited. LayerX transfers produce sequencer-signed receipts with Merkle inclusion proofs, anchored to Paxeer mainnet. Deus invocations produce EIP-712 receipts.
   </Accordion>
+
   <Accordion title="How is tool access constrained?">
-    Tools must be declared (exhaustively) in the agent manifest and granted by the skill's `§TOOLS` allowlist. URIs are version-pinned, and the capability gate enforces side-effect classes against `allowed_side_effects`.
+    Tools must be declared exhaustively in the agent manifest. The executor rejects any drift between the declared tool list and what the server actually advertises at boot. Each tool is pinned to a versioned URI (`matrix://tool/mcp/<alias>/<name>@<version>`) and classified by side-effect class (`read`, `write`, `network`, `shell`). The capability gate enforces these classes against the `allowed_side_effects` declared in the manifest. Skills further restrict access via their `TOOLS` allowlist.
   </Accordion>
+
+  <Accordion title="How does the agent handle irreversible actions?">
+    Any action that moves funds, needs a signature, or performs an irreversible write is routed through `core_execute` to the MCL pipeline. The MCL cohort produces a reviewable typed plan with approval gates. The user sees the plan and must approve before execution proceeds. A nil approver (the default in unattended mode) denies every gate.
+  </Accordion>
+
+  <Accordion title="Are Automatrix actions safe?">
+    Automatrix (the proactive-task system) structurally excludes value-moving tools. Autonomous execution cannot transfer funds, sign transactions, or perform on-chain writes. Those always require explicit user approval through `core_execute` and the MCL pipeline.
+  </Accordion>
+
   <Accordion title="How do I report a vulnerability?">
-    Follow `SECURITY.md` in the repository for coordinated disclosure — do not open a public issue or PR with exploit details.
+    Follow the `SECURITY.md` file in the repository for coordinated disclosure. Do not open a public issue or pull request with exploit details. Responsible reporting ensures the issue can be addressed before public disclosure.
   </Accordion>
 </AccordionGroup>

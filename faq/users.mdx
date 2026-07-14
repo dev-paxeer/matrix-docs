@@ -1,22 +1,38 @@
 ---
 title: Users FAQ
-description: "Everyday questions for people using Matrix — clarifying questions, corrections, memory, long conversations, and reviewing what the agent will do."
+description: "Everyday questions for people using Matrix: clarifying questions, corrections, memory, long conversations, and reviewing what the agent will do."
 ---
 
 <AccordionGroup>
   <Accordion title="Why does Matrix sometimes ask a clarifying question?">
-    The active skill knows what it needs. When a required detail is missing it asks one focused question rather than guessing — this is by design, to keep your intent intact.
+    When a required detail is missing from your request, the agent asks one focused question rather than guessing. This is by design. A blocking unknown in the Frame means the agent cannot proceed without that information, and guessing would risk executing against the wrong intent.
   </Accordion>
+
   <Accordion title="Can I correct the agent without starting over?">
-    Yes. Because the plan is typed, you can adjust a constraint, change a target, or raise a budget structurally instead of rewriting your whole request.
+    Yes. Because the plan is typed as a Frame with explicit constraints, targets, and success criteria, you can adjust any of those structurally instead of rewriting your whole request. The agent updates the relevant fields and re-executes from there.
   </Accordion>
+
   <Accordion title="Does Matrix remember things between conversations?">
-    Yes — cortex stores your goals, preferences, facts, and past turns per actor, and surfaces the relevant pieces automatically so you don't repeat yourself.
+    Yes. Cortex stores your goals, preferences, facts, and past turns per actor in an append-only, content-addressed journal. The salience engine surfaces the relevant pieces automatically so you do not need to repeat yourself across sessions.
   </Accordion>
+
   <Accordion title="What happens in a very long conversation?">
-    Matrix consolidates older history into a running summary while preserving every high-entropy identifier (file paths, addresses, IDs) verbatim. You'll see a brief notice when it does this.
+    Matrix consolidates older history into a running summary while preserving every high-entropy identifier (file paths, addresses, IDs) verbatim. You will see a brief notice when consolidation occurs. The full history remains in Cortex and can be replayed byte-identically from the journal at any time.
   </Accordion>
+
   <Accordion title="Can I see what the agent will do before it acts?">
-    For monetary or irreversible work, the rigorous rail produces a reviewable typed plan first. You can inspect and correct it before anything runs.
+    For monetary or irreversible work, the MCL pipeline produces a reviewable typed plan first. You can inspect and correct it before anything runs. For reversible work (file edits, shell commands, web searches), Neo executes directly since those actions can be undone.
+  </Accordion>
+
+  <Accordion title="What is Automatrix?">
+    Automatrix is the proactive-task system. When enabled (per-user opt-in), the agent autonomously identifies and executes opportunities on your behalf. Automatrix structurally excludes value-moving tools for safety; chain writes still require your explicit approval through `core_execute`.
+  </Accordion>
+
+  <Accordion title="How do scheduled tasks work?">
+    Through Chronos, the agent scheduler. You (or the agent) can schedule future wakes as one-shot (with a delay or at a specific time) or cron-style recurring tasks. Each scheduled task carries a wake message that is delivered to the agent when it fires. Scheduled tasks are durable: they survive restarts.
+  </Accordion>
+
+  <Accordion title="Can the agent access my email and calendar?">
+    Yes, if you connect your Google account through UWAC (Universal Web Agent Connector). This gives the agent access to Gmail (search, read, send) and Google Calendar (list, create events) as MCP tools. Sending email and creating calendar events require your explicit confirmation before execution.
   </Accordion>
 </AccordionGroup>

@@ -1,50 +1,128 @@
 ---
 title: Executor
-description: "Where intents become work — the lifecycle state machine, the pluggable plan walker, MCP tool dispatch, the materiality classifier, and the single-flight per-user daemon."
+description: "The executor turns Intent IR into executed work: lifecycle state machine, plan-tree walker, MCP tool dispatch, materiality classification, replay determinism, and 22 locked design decisions."
 ---
 
-The **executor** turns an Intent IR into executed work. It owns the plan walker, the lifecycle machine, MCP tool dispatch, and the per-user daemon.
+The **executor** turns an Intent IR into executed work. It owns the plan walker, the lifecycle machine, MCP tool dispatch, materiality classification, and intent attestation. It is the fourth top-level Go module after `matrix/cortex`, `matrix/mcl`, and `matrix/bridge`.
+
+## Repository layout
+
+```
+executor/
+├── go.mod                    # module matrix/executor; replace cortex, mcl, bridge
+├── README.md
+├── lifecycle/                # state machine
+│   ├── state.go              # State enum + Transition + Allowed transitions
+│   ├── machine.go            # Machine{actor, intent_id, current} + Apply
+│   └── *_test.go
+├── tool/                     # tool registry
+│   ├── tool.go               # Tool interface + ToolCall + ToolResult
+│   ├── registry.go           # Registry + NativeTool/MCPTool providers
+│   └── manifest.go           # ToolManifest schema (version, args, side-effects)
+├── mcp/                      # MCP client
+│   ├── jsonrpc.go            # JSON-RPC 2.0 codec
+│   ├── client.go             # initialize / tools.list / tools.call / ping
+│   ├── stdio.go              # stdio transport + subprocess lifecycle
+│   ├── http.go               # streamable HTTP transport
+│   ├── manager.go            # per-agent server pool: spawn/health/reconnect
+│   └── mock_server.go        # test harness
+├── materiality/              # materiality classifier
+│   └── classify.go           # D9 section 18.1 material vs non-material plan modifications
+├── runtime/                  # plan walker
+│   ├── walker.go             # PlanTree DFS walk with parallel branches + gates
+│   ├── skill_loader.go       # matrix://skill/... to SKILL.mtx
+│   └── progress.go           # cortex Event memory per step + JSONL transcript
+└── cmd/
+    ├── mcl-execute/          # end-to-end CLI: walk / classify / loader / daemon
+    ├── mcl-tools/            # tool registry inspection: verify / list / describe / call
+    └── mcl-e2e/              # live end-to-end harness (3-run sweep, 75 assertions)
+```
 
 ## Key surfaces
 
 | Package | Role |
 | --- | --- |
-| `lifecycle/` | 8-state machine (drafting → completed/failed/cancelled). |
-| `mcp/` | JSON-RPC 2.0 client + stdio + streamable-HTTP transports + `Manager`. |
-| `tool/` | `Tool` interface + `Registry` + URI scheme + capability gate. |
-| `runtime/` | Plan walker (DFS, goroutine-per-`parallel`) + skill loader. |
-| `materiality/` | D9 §18.1 classifier (8 rules). |
-| `cmd/mcl-tools/` | `verify` / `list` / `describe` / `call` subcommands. |
-| `cmd/mcl-execute/` | `walk` / `classify` / `loader` / `daemon` subcommands. |
-| `cmd/mcl-e2e/` | Live end-to-end harness (3-run sweep, 75 assertions). |
+| `lifecycle/` | 8-state machine (drafting to completed/failed/cancelled) |
+| `mcp/` | JSON-RPC 2.0 client + stdio + streamable-HTTP transports + `Manager` |
+| `tool/` | `Tool` interface + `Registry` + URI scheme + capability gate |
+| `runtime/` | Plan walker (DFS, goroutine-per-`parallel`) + skill loader |
+| `materiality/` | D9 section 18.1 classifier (8 rules) |
+| `cmd/mcl-tools/` | `verify` / `list` / `describe` / `call` subcommands |
+| `cmd/mcl-execute/` | `walk` / `classify` / `loader` / `daemon` subcommands |
+| `cmd/mcl-e2e/` | Live end-to-end harness (3-run sweep, 75 assertions) |
 
 ## The plan walker
 
-The walker DFS-walks a `PlanTree`:
+The walker DFS-walks a `PlanTree` from the Intent IR:
 
-- `sequential` / `parallel` — branch nodes (parallel fans out one goroutine per child).
-- `tool_call` — `Registry.Get(uri) → Tool.Call(args)`.
-- `step` — `StepHandler.HandleStep(prompt)` → the executor LLM.
-- `sub_dispatch` — opt-in via `-allow-sub-dispatch`.
-- `gate` — `GateHandler.HandleGate(question)` (stdin in CLI mode).
+- **`sequential` / `parallel`** - branch nodes. Parallel fans out one goroutine per child.
+- **`tool_call`** - `Registry.Get(uri) -> Tool.Call(args)`.
+- **`step`** - `StepHandler.HandleStep(prompt)` calls the executor LLM.
+- **`sub_dispatch`** - opt-in via `-allow-sub-dispatch`.
+- **`gate`** - `GateHandler.HandleGate(question)` (stdin in CLI mode).
 
-It is **pluggable**: `StepHandler` / `SubDispatchHandler` / `GateHandler` are interfaces with sane defaults (Noop / NotImplemented / Noop). Production wires the LLM `StepHandler` from `cmd/mcl-execute`.
+The walker is pluggable: `StepHandler` / `SubDispatchHandler` / `GateHandler` are interfaces with sane defaults (Noop / NotImplemented / Noop). Production wires the LLM `StepHandler` from `cmd/mcl-execute`.
 
 <Note>
 `runtime/walker.go` is the canonical walker. The harness walkers in `cmd/mcl-e2e/` may drift for testability but are not the source of truth.
 </Note>
 
-## Tool dispatch & capability gate
+## MCP tool dispatch
 
-Tool URIs must be version-pinned (`@<semver>` or `@sha256:…`) at parse time — `ErrUnpinnedTool` fires on bare-head URIs. The capability gate checks each call against the skill's declared `§TOOLS` allowlist; an undeclared tool call fails closed. MCP credentials are `$env:NAME` references, never literal values.
+Tool URIs use the scheme `matrix://tool/mcp/<local-server-alias>/<tool-name>@<server-version>`. URIs must be version-pinned (`@<semver>` or `@sha256:...`) at parse time; `ErrUnpinnedTool` fires on bare-head URIs.
+
+The capability gate checks each call against the skill's declared `TOOLS` allowlist; an undeclared tool call fails closed. MCP credentials are `$env:NAME` references, never literal values.
+
+### MCP server lifecycle
+
+- Per-agent persistent processes, spawned on agent boot.
+- Health-pinged periodically; auto-reconnect on failure.
+- Graceful drain on shutdown.
+- Two transports: stdio (subprocess) and streamable HTTP.
+- SSE legacy transport is skipped.
+- Static manifest pinning: executor verifies MCP `tools/list` matches manifest at startup.
+- Server version pinning via package digest (sha256); S4 hard rule.
+
+### Tool manifest
+
+Each tool declares:
+- `version` - semver
+- `args` - JSON Schema
+- `side_effects` - classification for materiality
+
+## Lifecycle state machine
+
+The `lifecycle.Machine` tracks an intent through 8 states:
+
+```text
+drafting -> accepted -> running -> completed
+                                 -> failed
+                                 -> cancelled
+                    -> rejected
+         -> abandoned
+```
+
+Each transition is recorded as a signed (ed25519) envelope, written as JSON under `journal/<intent_id>/<seq>-<kind>.json`. Each step also journals a cortex `Event` memory for the audit trail.
+
+## Materiality classification
+
+The D9 section 18.1 classifier determines whether a plan modification is material (requires re-accept) or non-material (can proceed):
+
+- Material modifications halt execution until the user re-accepts.
+- Enforced live during the plan walk.
+- 8 classification rules covering: new tools, changed parameters, scope expansion, cost changes, and dependency shifts.
 
 ## Lifecycle and attestation
 
-Each lifecycle transition is recorded as a signed (ed25519) envelope, written as JSON under `journal/<intent_id>/<seq>-<kind>.json`. Each step also journals a cortex `Event`. On a terminal state, `cortex.Attest(IntentID, Outcome, Reason, Cited[], CreatedBy)` writes `KindAttest` + `KindLearnWeights` atomically.
+On a terminal state, `cortex.Attest(IntentID, Outcome, Reason, Cited[], CreatedBy)` writes `KindAttest` + `KindLearnWeights` in one atomic Pebble batch:
+
+- `KindAttest` records the intent outcome, cited memory URIs, and the creator.
+- `KindLearnWeights` EMA-updates per-actor salience weights toward (success) or away from (failure with reason in {factual_error, wrong_assumption}) the cited memories' factor profile.
+- `AttestResult` returns `Seq`, `AffectedIDs`, `SkippedURIs`, `CitationsDelta`, `LearnSeq`, `PrevWeights`, `NewWeights`.
 
 ## The daemon
 
-`mcl-execute daemon` is **single-flight** — one user per process. A concurrent `/messages` returns `409 Busy` (`sync.Mutex.TryLock`). The SSE broker uses per-subscriber buffered channels with drop-on-backpressure.
+`mcl-execute daemon` is single-flight: one user per process. A concurrent `/messages` returns `409 Busy` (`sync.Mutex.TryLock`). The SSE broker uses per-subscriber buffered channels with drop-on-backpressure.
 
 ```bash
 ./bin/mcl-execute daemon \
@@ -54,6 +132,63 @@ Each lifecycle transition is recorded as a signed (ed25519) envelope, written as
   -skills-root ./skills
 ```
 
-<Card title="Daemon API reference" icon="plug" href="/api-reference/daemon">
-  Full route list, request/response shapes, and SSE event types.
-</Card>
+## Replay determinism
+
+The executor adds no new SMT namespace; only journals cortex Event memories per step. Tool outputs are captured as cortex Fact memories at the moment of execution. Replay reads from cortex, never re-runs tools. Drop derived, rebuild, byte-identical `OverallRoot`.
+
+This extends the Phase 11 replay invariant: the executor's journal entries participate in the same MMR via `JournalHook`, and replay reconstructs them deterministically from the canonical store.
+
+## 22 locked design decisions
+
+| # | Decision |
+| --- | --- |
+| Q1 | Fourth top-level Go module with `replace` directives to sibling working trees |
+| Q2 | `PlanTree` IR lives in `MCL/ir/plan.go` -- shared by skill (producer) and executor (consumer + auditor) |
+| Q3 | Envelope codec lives in `MCL/envelope/` -- all 15 message kinds, ed25519 sign/verify, canonical CBOR for signing, JSON for on-disk storage |
+| Q4 | Off-chain tools via Anthropic MCP -- MCP client (stdio + streamable HTTP) + register filesystem-mcp + fetch-mcp + git-mcp in default agent manifest |
+| Q5 | Two-layer sandbox: Matrix capability check + MCP server's own jail + subprocess rlimits |
+| Q6 | Sub-dispatch v1: in-process under same agent only; cross-agent + CortexScope Merkle proof handoff deferred to v1.1 |
+| Q7 | Replay determinism: cortex state only (byte-deterministic per Phase 11). Tool outputs captured as cortex Fact memories at moment of execution; replay reads from cortex, never re-runs tools |
+| Q8 | Intent IR + envelopes live at `journal/logs/<intent_id>/<seq>.envelope.json` (workspace-relative, cross-actor) |
+| Q9 | Failure taxonomy: full `research/02-protocol.md` section 13 set + SKILL.mtx `FAILURE_MODES` |
+| Q10 | Policy gates (`policy.gate` / `policy.gate.resolve`) in v1 (synchronous, no async/timeout) |
+| Q11 | Materiality classification enforced live during plan walk; material mods halt execution until re-accept |
+| Q12 | Integration tests against real Fireworks executor LLM in CI-skippable mode |
+| Q13 | Executor model default: `DefaultExecutorModel()` from `MCL/llm/model.go` (DeepSeek-V4-Pro on Fireworks) |
+| Q14 | Streaming progress: JSONL per-event to stdout/stderr; cortex Event memory per step; SSE deferred to v1.1 |
+| Q15 | MCP transports v1: stdio + streamable HTTP; SSE legacy, skip |
+| Q16 | MCP server lifecycle: per-agent persistent processes; spawn on agent boot; health-pinged; auto-reconnect; graceful drain |
+| Q17 | Tool URI scheme: `matrix://tool/mcp/<local-server-alias>/<tool-name>@<server-version>` |
+| Q18 | MCP server credentials via env-var refs in agent manifest; never journaled |
+| Q19 | Native chain-tool framework slot kept; no chain tool ships in v1 |
+| Q20 | MCP tool args journaled in full (modulo redacted env vars); results as Fact memory or filesystem pointer |
+| Q21 | Static manifest pinning -- executor verifies MCP `tools/list` matches manifest at startup |
+| Q22 | MCP server version pinning via package digest (sha256); S4 hard rule |
+
+## Dependencies on sibling modules
+
+| Sibling | What we import | Why |
+| --- | --- | --- |
+| `MCL/ir` | `Intent`, `PlanTree`, canonical JSON helpers | Typed source of truth + content addressing |
+| `MCL/envelope` | All 15 message kinds + sign/verify | Lifecycle messages on the wire |
+| `MCL/llm` | `APIClient` (executor model) | In-skill prompts during plan walk |
+| `cortex/` | `Cortex`, `Attest`, `Context` | Plan-walk citation + outcome attestation |
+| `bridge/` | `Adapter` | Compile-time D13 reuse if executor also re-resolves at run-time |
+
+## Intentional non-dependencies
+
+- **No direct chain integration.** `tools/chain`, `tools/argus`, etc. are framework architectural slots; v1 ships no chain tools.
+- **No web framework.** CLI-only at v1; UI/RPC layer is v1.1.
+
+## Verification posture
+
+Every session ends with `go test -count=1 ./...` green across all 4 modules + `go vet ./...` clean across all 4. The replay invariant (Phase 11) extends to executor: drop derived, rebuild, byte-identical `OverallRoot`. Executor adds no new SMT namespace; only journals cortex Event memories per step.
+
+<Columns cols={2}>
+  <Card title="MCL & Skill Authoring" icon="diagram-project" href="/developer/mcl">
+    How skills are compiled into the Intent IR the executor walks.
+  </Card>
+  <Card title="Cortex internals" icon="database" href="/developer/cortex">
+    The memory store the executor journals to and attests against.
+  </Card>
+</Columns>

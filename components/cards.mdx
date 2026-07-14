@@ -3,6 +3,8 @@ title: Cards
 description: "Create linked feature grids and navigation panels with Card and Columns components. Supports icons, descriptions, and click-through links."
 ---
 
+Cards are visual containers for linking to other pages, highlighting features, or grouping related content.
+
 ## Basic card
 
 <Card title="Getting Started">
@@ -18,19 +20,19 @@ description: "Create linked feature grids and navigation panels with Card and Co
 ## Card with icon
 
 <Card title="Documentation" icon="book">
-  Add an icon for visual emphasis.
+  Add a Font Awesome icon for visual emphasis.
 </Card>
 
 ```mdx
 <Card title="Documentation" icon="book">
-  Add an icon for visual emphasis.
+  Add a Font Awesome icon for visual emphasis.
 </Card>
 ```
 
 ## Card with link
 
 <Card title="Quickstart Guide" icon="play" href="/quickstart">
-  Cards can link to other pages.
+  Cards can link to other pages. Click to navigate.
 </Card>
 
 ```mdx
@@ -39,31 +41,37 @@ description: "Create linked feature grids and navigation panels with Card and Co
 </Card>
 ```
 
-## Card group
+## Card groups with Columns
 
-Use `Columns` to arrange cards in a grid:
+Use `Columns` to arrange cards in a responsive grid:
 
 <Columns cols={2}>
-  <Card title="Docs" icon="book">
-    Documentation
+  <Card title="MCP Overview" icon="plug" href="/mcp/overview">
+    How Matrix uses MCP for its tool surface.
   </Card>
-  <Card title="API" icon="code">
-    API Reference
+  <Card title="Agent Manifests" icon="file-code" href="/mcp/agent-manifests">
+    The manifest schema and field reference.
   </Card>
-  <Card title="Guides" icon="graduation-cap">
-    Tutorials
+  <Card title="Tool Servers" icon="server" href="/mcp/tool-servers">
+    The servers the default agent ships with.
   </Card>
-  <Card title="Support" icon="life-ring">
-    Get help
+  <Card title="Write a Bridge" icon="screwdriver-wrench" href="/mcp/writing-a-tool-bridge">
+    Add a new MCP server to an agent.
   </Card>
 </Columns>
 
 ```mdx
 <Columns cols={2}>
-  <Card title="Docs" icon="book">Documentation</Card>
-  <Card title="API" icon="code">API Reference</Card>
+  <Card title="MCP Overview" icon="plug" href="/mcp/overview">
+    How Matrix uses MCP for its tool surface.
+  </Card>
+  <Card title="Agent Manifests" icon="file-code" href="/mcp/agent-manifests">
+    The manifest schema and field reference.
+  </Card>
 </Columns>
 ```
+
+The `cols` prop accepts `2`, `3`, or `4` to control the grid layout.
 
 ## Properties
 
@@ -72,9 +80,9 @@ Use `Columns` to arrange cards in a grid:
 </ParamField>
 
 <ParamField name="icon" type="string">
-  Font Awesome icon name (e.g., "book", "code", "rocket").
+  Font Awesome icon name (e.g., "book", "code", "rocket", "plug").
 </ParamField>
 
 <ParamField name="href" type="string">
-  URL the card links to.
+  URL the card links to. Makes the entire card clickable.
 </ParamField>

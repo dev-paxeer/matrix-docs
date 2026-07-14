@@ -1,22 +1,42 @@
 ---
 title: Billing & PAX FAQ
-description: "Questions about how Matrix prices usage — PAX, the rate card, the free tier, bring-your-own-key, receipts, and agent balances."
+description: "Questions about how Matrix prices usage: PAX, the rate card, the free tier, bring-your-own-key, LayerX balances, and agent-to-agent payments."
 ---
 
 <AccordionGroup>
   <Accordion title="What is PAX?">
-    PAX is the Paxeer Network unit Matrix uses to price LLM usage in the credit ledger. Rates are derived from the underlying USD provider prices at a fixed PAX reference.
+    PAX is the native token of the Paxeer Network. Matrix uses it as the unit to price LLM usage in the gateway's credit ledger. Rates are derived from underlying USD provider prices at a fixed PAX reference rate. Every metered LLM call debits the actor's ledger in PAX.
   </Accordion>
+
   <Accordion title="How is a call priced?">
-    The gateway looks up the model in a versioned rate card, prices input/output tokens, and debits your credit ledger. Each ledger row records the rate-table version used, so historical costs replay byte-identically after a reprice.
+    The gateway looks up the model in a versioned rate card, prices input and output tokens separately, and debits the `credit_ledger`. Each ledger row records the rate-table version used, so historical costs replay byte-identically after a reprice. Response headers include `X-Matrix-Cost-Pax` (this call's cost) and `X-Matrix-Daily-Remaining-Pax` (headroom left in the daily cap).
   </Accordion>
+
   <Accordion title="Is there a free tier?">
-    Yes — a per-day PAX allowance covers a whitelist of default models per slot (compiler / executor). Models outside the whitelist require bringing your own provider key via `X-Matrix-BYO-API-Key`.
+    Yes. A per-day PAX allowance covers a whitelist of default models per slot (compiler, planner, executor). The default daily cap is 10 PAX per actor. Models outside the whitelist return `403 model_not_whitelisted`. To use non-whitelisted models, bring your own provider key via the `X-Matrix-BYO-API-Key` header, which bypasses both the whitelist and metering.
   </Accordion>
+
+  <Accordion title="Which models are in the free-tier whitelist?">
+    **Compiler slot:** `gpt-oss-120b`, `deepseek-v4-pro`. **Planner slot:** `gpt-oss-120b`, `deepseek-v4-flash`, `deepseek-v4-pro`. **Executor slot:** `deepseek-v4-flash`, `kimi-k2.6`. The v1 defaults pin the planner to `v4-pro` and the executor to `kimi-k2.6` via dedicated environment knobs.
+  </Accordion>
+
+  <Accordion title="What happens when I hit the daily budget cap?">
+    The gateway returns `429 budget_exhausted` with a JSON body showing `spent_pax` and `limit_pax`. No further metered calls are allowed until the daily window resets. BYO key calls bypass this limit entirely.
+  </Accordion>
+
   <Accordion title="How do agent-to-agent payments work?">
-    Through LayerX: deposit, pay, fetch a signed receipt, withdraw, settle. Balances separate available vs reserved funds. Marketplace calls on Deus produce EIP-712 receipts and support payment channels + co-signed vouchers.
+    Through LayerX. Each agent has a USD-denominated USDX balance (fully reserved 1:1 by USDL). Agents pay each other instantly and gaslessly by DID. Every transfer produces a sequencer-signed receipt with Merkle inclusion proof. Balances can be funded by depositing USDL (or USDC/USDT/PAX with automatic swap) into the LayerX vault, and withdrawn by burning USDX to release USDL to a mapped Paxeer payout address.
   </Accordion>
+
+  <Accordion title="How do Deus marketplace payments work?">
+    When an agent invokes a Deus service, the call returns 402 with USDX pricing terms. The LayerX bridge auto-signs and retries under the agent's spend leash (`LAYERX_MAX_SPEND_USDX` per call, `LAYERX_MAX_DAILY_USDX` rolling daily). Every invocation produces an EIP-712 receipt. Developers keep 100% of revenue; Paxeer charges a 0% platform fee and earns from on-chain activity.
+  </Accordion>
+
   <Accordion title="Are payments safe against retries?">
-    Money-moving endpoints accept an `Idempotency-Key`, so a retried invoke won't double-charge.
+    Yes. Money-moving endpoints accept an `Idempotency-Key` header, so a retried invocation will not double-charge. LayerX withdrawals and Deus invocations are both idempotent by design.
+  </Accordion>
+
+  <Accordion title="What is USDX vs USDL?">
+    USDL is a stablecoin on Paxeer Network. USDX is the USD-denominated unit inside LayerX, fully reserved 1:1 by USDL held in the LayerX vault. Depositing USDL mints USDX; burning USDX releases USDL. USDX enables instant, gasless agent-to-agent transfers without touching the chain for every payment.
   </Accordion>
 </AccordionGroup>

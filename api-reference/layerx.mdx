@@ -1,47 +1,140 @@
 ---
 title: LayerX API
-description: "The settlement fabric — agent DID auth plus balance, deposit, pay, receipt, withdraw, and settle endpoints over the reserved-balance agent account model."
+description: "The settlement fabric: agent DID auth plus balance, deposit, pay, hold, receipt, withdraw, and settle endpoints over the reserved-balance agent account model with public reserve proofs."
 ---
 
-**LayerX** is the settlement fabric and custody spine for agent balances. Agents authenticate with their DID, then move value through a reserved-balance account model backed by on-chain settlement.
+**LayerX** (`layerxd`) is the agent-native settlement fabric. It gives every Matrix agent an instant-settling, gasless, USD-denominated balance (**USDX**), fully reserved 1:1 by **USDL**, with a Merkle-provable signed receipt for every transfer, net-settled to Paxeer mainnet (chain 125) on a tiered schedule. An agent's **DID is its account**.
 
-## Routes
+## Surface split
+
+Since Phase 4 (full-transparency rollup model), the surface is split into two groups:
+
+- **Public read / explorer** -- unauthenticated. Anyone can read so receipts and roots are independently verifiable and the reserve is publicly auditable.
+- **Write / principal** -- authorized by a DID signature alone (signed intent) or an `X-LayerX-Agent` principal token as a convenience. The shared transport bearer (`LAYERX_TOKEN`) is an optional fleet gate, never the public gate.
+
+## Routes -- public read surface (no auth)
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| GET | `/healthz` | Liveness. |
-| GET | `/` | Service root / info. |
-| POST | `/v1/agent/auth/challenge` | Request a nonce for the agent DID. |
-| POST | `/v1/agent/auth/verify` | Verify the signed nonce → session token. |
-| GET | `/v1/balance` | Current balance (available + reserved). |
-| GET | `/v1/deposit` | Deposit address / instructions. |
-| POST | `/v1/pay` | Pay another agent / service. |
-| GET | `/v1/receipt/{seq}` | Fetch a signed receipt by sequence. |
-| POST | `/v1/withdraw` | Withdraw to an on-chain address. |
-| POST | `/v1/settle` | Trigger settlement. |
+| GET | `/healthz` | Unauthenticated liveness |
+| GET | `/` | Service root: name, version, health link |
+| GET | `/v1/info` | Sequencer metadata (chain ID, anchor/USDL addresses, window, sequencer pubkey) |
+| GET | `/v1/supply` | Circulating USDX supply + on-chain USDL reserve (the reserve proof, invariant i1) |
+| GET | `/v1/batches` | Settlement batch feed (KEYSET-paginated) |
+| GET | `/v1/batch/{id}` | Single batch by UUID |
+| GET | `/v1/anchor/{root}` | On-chain anchor proof for a Merkle root |
+| GET | `/v1/receipt/{seq}` | Signed inclusion receipt (+ anchor proof once settled) |
+| GET | `/v1/transfers` | Public transfer feed (KEYSET-paginated: `?limit=&before=&did=`) |
+| GET | `/v1/account/{did}` | Account snapshot (balance, escrow bound, payout address) |
+| GET | `/v1/stream` | Public live event stream (SSE): `transfer` + `anchor` events; reconnect replays via `Last-Event-ID` |
+| GET | `/v1/hold/{id}` | Escrow hold status |
+
+## Routes -- auth lane (public; mints principal token)
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| POST | `/v1/agent/auth/challenge` | Open the ed25519 DID auth lane |
+| POST | `/v1/agent/auth/verify` | Mint a short-lived principal token |
+
+## Routes -- write / principal surface
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| GET | `/v1/balance` | Current USDX balance + escrow bound + payout address |
+| GET | `/v1/deposit` | Vault address + DID-claim payload |
+| POST | `/v1/account/evm` | Bind an EVM payout address to the account |
+| POST | `/v1/pay` | Pay another agent by DID, returns signed receipt |
+| POST | `/v1/hold` | Create an escrow hold (reserve funds) |
+| POST | `/v1/hold/{id}/capture` | Capture a hold (settle to recipient) |
+| POST | `/v1/hold/{id}/release` | Release a hold (return funds) |
+| POST | `/v1/withdraw` | Burn USDX, release USDL to payout address |
+| POST | `/v1/settle` | Force-settle the open settlement window now |
+
+## Authentication
+
+Two-layer auth on write paths:
+
+1. **Transport bearer** (optional fleet gate) -- `Authorization: Bearer <LAYERX_TOKEN>`.
+2. **Principal** -- either an `X-LayerX-Agent` session token (minted via challenge/verify) OR a directly DID-signed intent carried in-band.
+
+The public read surface and auth lane are never transport-gated.
 
 ## Account model
 
-LayerX runs an always-on sequencer over a reserved-balance model: funds can be reserved against in-flight obligations, payments produce signed receipts, and settlement anchors balances on-chain via the vault / settlement-anchor contracts.
+LayerX runs an always-on sequencer over a reserved-balance model:
+
+- Funds can be reserved against in-flight obligations (escrow holds).
+- Payments produce signed, Merkle-provable receipts.
+- Settlement anchors balances on-chain via the vault / settlement-anchor contracts.
+- Fully reserved: `USDX == USDL in vault` at all times.
+- Domain-separated Merkle leaves, Paxeer-anchored roots, L1 force-withdraw escape hatch.
 
 ## Pay
 
+`POST /v1/pay`
+
 <ParamField body="to" type="string" required>
-  The recipient agent DID or address.
+  The recipient agent DID.
 </ParamField>
 <ParamField body="amount" type="string" required>
-  The amount to pay (string-encoded to avoid float drift).
+  The amount in USDX (decimal string, 6dp).
+</ParamField>
+<ParamField body="ref" type="string">
+  Optional 32-byte binding digest (0x + 64 hex).
 </ParamField>
 
 <RequestExample>
 ```bash cURL
 curl -X POST https://layerx.example/v1/pay \
-  -H "Authorization: Bearer $LAYERX_SESSION" \
+  -H "Authorization: Bearer $LAYERX_TOKEN" \
+  -H "X-LayerX-Agent: $PRINCIPAL_TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"to": "did:matrix:agent:abcd", "amount": "12.50"}'
+  -d '{"to": "did:matrix:agent:abcd1234567890ab", "amount": "12.500000"}'
 ```
 </RequestExample>
 
-<ResponseField name="seq" type="integer" required>
-  The receipt sequence number — fetch the signed receipt at `/v1/receipt/{seq}`.
+<ResponseField name="ok" type="boolean" required>
+  Whether the payment succeeded.
 </ResponseField>
+<ResponseField name="data.seq" type="integer" required>
+  The receipt sequence number. Fetch the signed receipt at `GET /v1/receipt/{seq}`.
+</ResponseField>
+
+## Escrow holds
+
+Escrow holds let you reserve funds before committing:
+
+1. `POST /v1/hold` -- create a hold, reserving the amount.
+2. `POST /v1/hold/{id}/capture` -- settle the hold to the recipient.
+3. `POST /v1/hold/{id}/release` -- release the hold, returning funds.
+
+## Withdraw
+
+`POST /v1/withdraw`
+
+<ParamField body="amount" type="string" required>
+  Amount in USDX to withdraw.
+</ParamField>
+<ParamField body="swap_out" type="string">
+  Optional target asset symbol for a DEX swap (uppercase ticker, 1-12 chars).
+</ParamField>
+
+Burns USDX and releases USDL to the agent's bound EVM payout address.
+
+## Transfer feed pagination
+
+`GET /v1/transfers?limit=50&before=<seq>&did=<did>`
+
+KEYSET-paginated. The response carries `next_before` for fetching the previous page. Filter by `did` to scope to a single account.
+
+## Invariants
+
+- Fully reserved (`USDX == USDL in vault`)
+- Sequencer holds no agent keys
+- Escrow-bounded spend
+- Domain-separated Merkle receipts
+- Paxeer-anchored roots
+- L1 force-withdraw escape hatch
+- DID-scoped accounts
+- Tiered settlement schedule
+- One always-on sequencer

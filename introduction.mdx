@@ -1,56 +1,64 @@
 ---
 title: Introduction
-description: "Matrix is the cognition and UX layer on Paxeer Network — it turns natural language into typed, inspectable, replayable agent execution across two rails: Neo and the MCL pipeline."
+description: "Matrix is an agent platform built by Paxlabs on Paxeer Network. It turns natural language into typed, inspectable, replayable agent execution, including on-chain operations."
 ---
 
-**Matrix** is the cognition and UX layer on top of [Paxeer Network](https://paxeer.app). It turns natural-language requests from non-developers into a typed, inspectable, correctable **Intent IR** that an agent can actually execute — without the classic failure modes (prompt fragility, intent loss, no shared ontology, no structured correction) that break human ↔ agent workflows today.
+**Matrix** is an agent platform built by [Paxlabs](https://paxlabs.app) on [Paxeer Network](https://paxeer.app). It lets AI agents do real work: read and write files, browse the web, manage on-chain assets, deploy smart contracts, pay other agents, and schedule future actions, all driven by natural language.
 
-<Tip>
-New here? Read this page for the mental model, then jump to the [Quickstart](/quickstart) to compile your first intent and drive an end-to-end walk.
-</Tip>
+Matrix is model-agnostic and harness-driven. The runtime controls the loop, manages memory, enforces policy, and dispatches tools. The LLM generates text and tool-call intents; the harness is the only effector. This separation is what makes agents reliable enough for production use.
 
 ## Two rails, one substrate
 
-Matrix ships two agent rails over one shared memory + execution substrate. The conversational rail handles everyday reversible work; the rigorous rail handles anything monetary or irreversible.
+Matrix runs two execution rails over a shared memory and tool substrate. The conversational rail handles everyday reversible work. The rigorous rail handles anything monetary, irreversible, or compliance-sensitive.
 
 <Columns cols={2}>
-  <Card title="Neo — conversational rail" icon="comments">
-    The default tool-calling agent: familiar, robust, fully permissive on reversible work (shell, code, fetch, web). Delegates monetary/irreversible work to MCL.
+  <Card title="Neo (conversational)" icon="comments">
+    A recursive LLM tool-calling loop with persistent memory. Permissive on reversible work: shell, code, web search, file operations. Delegates high-stakes work to the MCL rail automatically.
   </Card>
-  <Card title="MCL — rigorous rail" icon="diagram-project">
-    Natural language → typed Intent IR → plan → replayable walk. For high-stakes, on-chain, or irreversible work where determinism matters.
+  <Card title="MCL (rigorous)" icon="diagram-project">
+    Compiles natural language into a typed Intent IR, synthesizes a plan, and walks it deterministically. Every step is signed, journaled, and replayable. Used for on-chain transactions, irreversible operations, and monetary work.
   </Card>
 </Columns>
+
+## What makes Matrix different
+
+**Model-agnostic.** Matrix does not depend on any single LLM provider. The harness owns the control loop; any conforming model can drive it.
+
+**Harness-driven execution.** The agent loop implements per-turn step budgets, stall detection, bounded recovery, and honest partials on exhaustion. It never fabricates success.
+
+**Typed intents, not prompt strings.** The MCL compiler converts prose into a typed, signed Intent IR with a closed verb vocabulary, typed object slots, constraints, and success criteria. The user reviews and signs before anything executes.
+
+**Persistent memory.** Cortex gives each actor an append-only, Merkle-anchored memory graph with salience-ranked recall, semantic search via HNSW, and byte-deterministic replay.
+
+**Real on-chain capability.** Agents can read chain state, execute transactions, deploy and interact with smart contracts, manage token balances, and settle payments, all through authenticated, policy-gated tool surfaces.
 
 ## The stack
 
 | Layer | Role |
 | --- | --- |
-| **MCL** | Protocol turning NL → typed Intent IR. Closed verb vocab (10), closed object kinds (8). |
-| **cortex** | Per-actor typed memory graph on Pebble. Append-only journal, Merkle-anchored snapshots, byte-deterministic replay. |
-| **bridge** | Adapter wiring the MCL compiler's `Cortex` interface to a live cortex instance. |
-| **executor** | Plan walker, lifecycle machine, MCP tool dispatch, per-user daemon, Liaison narrator, e2e harness. |
-| **neo** | The default conversational agent — tool-calling loop with paged cortex memory. |
-| **gateway** | Metered LLM proxy + PAX credit ledger (free-tier whitelist + rate card). |
-| **router** | Per-user Fly Machine provisioning + wake-then-reverse-proxy front door. |
-| **deus** | Agent-service marketplace: registry, discovery, metered invoke, EIP-712 receipts, hosting. |
-| **layerx** | Settlement fabric and custody spine for agent balances. |
-| **uwac** | Universal Web Agent Connector — OAuth vault → per-user MCP tools. |
-| **tachyon** | Agent-native Solidity/EVM engine — compile / test / simulate / deploy. |
+| **Neo** | Conversational agent. Recursive tool-calling loop with paged cortex memory, conversational recall, and writeback consolidation. |
+| **MCL** | Typed intent pipeline. Natural language to Intent IR via a seedable, grammar-constrained compiler written in MatrixScript. |
+| **Cortex** | Per-actor persistent memory. Pebble-backed typed memory graph with append-only journal, salience scoring, HNSW vector index, and Merkle-anchored snapshots. |
+| **Executor** | Plan walker. Lifecycle state machine, depth-first plan traversal with parallel branches and gates, MCP-backed tool dispatch, materiality classification. |
+| **LayerX** | Settlement fabric. Escrow-backed USDX balances, gasless agent-to-agent payments, sequencer-signed receipts, Merkle-batched settlement to Paxeer. |
+| **Deus** | Service marketplace. Agent-service discovery, signed price quotes, metered invocation with LayerX payment, EIP-712 receipts. |
+| **Chronos** | Scheduler. Durable alarm scheduling with one-shot and cron support, timezone-aware wake delivery back into the agent loop. |
+| **Tachyon** | Smart contract engine. Solidity compilation, Forge testing, on-chain simulation, and deployment through the agent's embedded wallet. |
+| **Tools** | MCP tool ecosystem. Network operations (Paxeer RPC, explorer, markets), web search, media, filesystem, git, browser, and scaffold tools. |
 
 ## Where to go next
 
 <Columns cols={2}>
   <Card title="Quickstart" icon="play" href="/quickstart">
-    Build the modules, compile an intent, walk a plan, run the daemon.
+    Clone, build, configure, and run your first agent interaction.
   </Card>
   <Card title="Core concepts" icon="lightbulb" href="/concepts">
-    Intents, frames, verbs, skills, cortex, envelopes, attestation, and replay.
-  </Card>
-  <Card title="Glossary" icon="book" href="/glossary">
-    Every Matrix term in one place.
+    The mental model: Neo, Cortex, MCL, Executor, LayerX, and the rest.
   </Card>
   <Card title="Architecture" icon="sitemap" href="/developer/architecture">
-    The layered model, cross-cutting flows, and load-bearing invariants.
+    Module boundaries, cross-cutting flows, and load-bearing invariants.
+  </Card>
+  <Card title="API Reference" icon="code" href="/api-reference/overview">
+    Daemon routes, service APIs, and tool surfaces.
   </Card>
 </Columns>

@@ -1,27 +1,29 @@
 ---
 title: Daemon API
-description: "The per-user Matrix daemon (mcl-execute daemon) HTTP + SSE surface — chat, message submission, the events transcript stream, intent envelope chains, and identity."
+description: "The per-user Matrix daemon (mcl-execute daemon) HTTP + SSE surface: chat, message submission, the events transcript stream, intent envelope chains, and identity."
 ---
 
 The per-user daemon (`mcl-execute daemon`) is the runtime surface for a single user. It is **single-flight**: one user per process, and a concurrent `POST /messages` returns `409 Busy`.
 
 <Info>
-Auth: when started with `MATRIX_DAEMON_TOKEN`, all routes except `/healthz` require `Authorization: Bearer <token>`. In production the [router](/api-reference/router) terminates Supabase JWT auth and proxies here over the WireGuard mesh.
+Auth: when started with `MATRIX_DAEMON_TOKEN`, all routes except `/healthz` require `Authorization: Bearer ***`. In production the [router](/api-reference/router) terminates Supabase JWT auth and proxies here over the WireGuard mesh.
 </Info>
 
 ## Routes
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| GET | `/healthz` | Liveness + SSE broker stats. |
-| POST | `/chat` | Converse with the agent (Neo front door). |
-| GET | `/events` | Server-Sent Events tail (live transcript). |
-| POST | `/messages` | Submit a prose message (MCL rigorous rail). |
-| GET | `/intents/{id}` | Read the intent envelope chain by ID. |
-| GET | `/me` | Per-user settings + identity. |
-| POST | `/shutdown` | Graceful drain. |
+| GET | `/healthz` | Liveness + SSE broker stats |
+| POST | `/chat` | Converse with the agent (Neo front door) |
+| GET | `/events` | Server-Sent Events tail (live transcript) |
+| POST | `/messages` | Submit a prose message (MCL rigorous rail) |
+| GET | `/intents/{id}` | Read the intent envelope chain by ID |
+| GET | `/me` | Per-user settings + identity |
+| POST | `/shutdown` | Graceful drain |
 
 ## Chat
+
+`POST /chat` is the Neo conversational front door. It accepts a natural-language message and returns the agent's response.
 
 <ParamField body="message" type="string" required>
   The user's natural-language input for this turn.
@@ -55,9 +57,15 @@ print(r.json())
 curl -N http://localhost:8080/events -H "Authorization: Bearer $MATRIX_DAEMON_TOKEN"
 ```
 
+The SSE broker maintains per-subscriber buffered channels. Subscribers that fall behind experience drop-on-backpressure rather than unbounded memory growth.
+
+## Messages
+
+`POST /messages` submits a prose message through the MCL rigorous execution rail (compile, plan, walk). Returns `409 Busy` if a walk is already in flight.
+
 ## Intents
 
-`GET /intents/{id}` returns the signed envelope chain for an intent — every lifecycle transition (drafting → … → completed/failed/cancelled), each an ed25519-signed envelope stored under `journal/<intent_id>/<seq>-<kind>.json`.
+`GET /intents/{id}` returns the signed envelope chain for an intent: every lifecycle transition (drafting, planning, executing, completed/failed/cancelled), each an ed25519-signed envelope stored under `journal/<intent_id>/<seq>-<kind>.json`.
 
 <ResponseField name="id" type="string" required>
   The intent ID (also its content-addressed hash root).
@@ -65,6 +73,10 @@ curl -N http://localhost:8080/events -H "Authorization: Bearer $MATRIX_DAEMON_TO
 <ResponseField name="envelopes" type="array">
   Ordered lifecycle envelopes, each with `seq`, `kind`, `body`, and `signature`.
 </ResponseField>
+
+## Identity
+
+`GET /me` returns per-user settings and identity information for the authenticated daemon.
 
 <Card title="Executor internals" icon="gears" href="/developer/executor">
   How the daemon walks plans and attests outcomes.

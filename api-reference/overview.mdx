@@ -1,6 +1,6 @@
 ---
 title: API Overview
-description: "How Matrix HTTP surfaces are organized — the per-user daemon, the metered gateway, the router front door, and the agent-facing services (Chronos, Deus, LayerX, UWAC, Tachyon) — plus the shared auth patterns."
+description: "How Matrix HTTP surfaces are organized: the per-user daemon, the metered gateway, the router front door, and the agent-facing services (Chronos, Deus, LayerX, UWAC, Tachyon) plus the shared auth patterns."
 ---
 
 Matrix exposes several HTTP surfaces. Each is a distinct service with its own base path and auth model.
@@ -9,14 +9,15 @@ Matrix exposes several HTTP surfaces. Each is a distinct service with its own ba
 
 | Service | Base | Auth | Purpose |
 | --- | --- | --- | --- |
-| [Daemon](/api-reference/daemon) | `:8080` | Bearer (`MATRIX_DAEMON_TOKEN`) | Per-user chat + intent execution surface. |
-| [Gateway](/api-reference/gateway) | `/v1` | Bearer + PAX ledger | Metered, OpenAI-compatible LLM proxy. |
-| [Router](/api-reference/router) | `:443` | Supabase JWT | Public front door — wakes the user's daemon and reverse-proxies. |
-| [Chronos](/api-reference/chronos) | `/v1` | Agent DID | Scheduler / wake-up alarms. |
-| [Deus](/api-reference/deus) | `/v1` | Developer + caller auth | Agent-service marketplace, invoke, receipts. |
-| [LayerX](/api-reference/layerx) | `/v1` | Agent DID | Settlement: balances, pay, withdraw, settle. |
-| [UWAC](/api-reference/uwac) | `/v1` | Agent DID | OAuth-vault connectors → per-user MCP tools. |
-| [Tachyon](/api-reference/tachyon) | `/v1` | Bearer | Solidity/EVM compile, test, simulate, deploy. |
+| [Daemon](/api-reference/daemon) | `:8080` | Bearer (`MATRIX_DAEMON_TOKEN`) | Per-user chat + intent execution surface |
+| [Gateway](/api-reference/gateway) | `/gw/v1` | Bearer + PAX ledger | Metered, OpenAI-compatible LLM proxy |
+| [Router](/api-reference/router) | `:443` | Supabase JWT | Public front door; wakes the user's daemon and reverse-proxies |
+| [Chronos](/api-reference/chronos) | `/v1` | Agent DID + transport bearer | Scheduler / wake-up alarms |
+| [Deus](/api-reference/deus) | `/v1` | Developer + caller auth | Agent-service marketplace, invoke, receipts |
+| [LayerX](/api-reference/layerx) | `/v1` | Agent DID (signed intent or principal token) | Settlement: balances, pay, withdraw, settle |
+| [UWAC](/api-reference/uwac) | `/v1` | Agent DID + transport bearer | OAuth-vault connectors exposed as per-user MCP tools |
+| [Tachyon](/api-reference/tachyon) | MCP stdio | Bearer (`MATRIX_TACHYON_TOKEN`) | Solidity/EVM compile, test, simulate, deploy |
+| [Cortex MCP](/api-reference/cli#cortex-mcp) | `:4242` (HTTP) | Bearer (`CORTEX_MCP_TOKEN`) | Persistent memory server (recall, search, remember) |
 
 ## Common patterns
 
@@ -24,22 +25,41 @@ Matrix exposes several HTTP surfaces. Each is a distinct service with its own ba
 
 Chronos, LayerX, and UWAC share a challenge/verify handshake that binds a request to an agent's ed25519 DID:
 
-<Steps>
-  <Step title="Request a challenge">
-    `POST /v1/agent/auth/challenge` with the agent DID returns a nonce to sign.
-  </Step>
-  <Step title="Verify the signature">
-    `POST /v1/agent/auth/verify` with the signed nonce returns a session token used for subsequent calls.
-  </Step>
-</Steps>
+1. **Request a challenge** -- `POST /v1/agent/auth/challenge` with the agent DID returns a nonce to sign.
+2. **Verify the signature** -- `POST /v1/agent/auth/verify` with the signed nonce returns a short-lived HMAC session token used for subsequent calls.
+
+The DID format is `did:matrix:<owner_user_id>:<16-hex-key-fingerprint>`. The signed message is `<service>-auth:<did>:<nonce>`. The principal token is scoped to the owner extracted from the DID label.
+
+### Two-layer auth (transport + principal)
+
+Chronos, LayerX, and UWAC use a two-layer auth model:
+
+- **Transport bearer** -- a shared `MATRIX_*_TOKEN` proves the caller is a legitimate Matrix daemon (router-injected). Required on all non-public paths.
+- **Principal token** -- the agent's DID-derived session token proves *which* owner is calling. Alarm/balance/invoke operations are owner-scoped.
 
 ### Health and version
 
-Every service exposes `GET /healthz` (liveness; the daemon also returns SSE broker stats). The router additionally serves `GET /v/version`.
+Every service exposes `GET /healthz` (unauthenticated liveness). The router additionally serves `GET /v/version`. Chronos and LayerX serve `GET /` with service name and version.
 
 ### Idempotency
 
-Money-moving endpoints (e.g. Deus `POST /v1/invoke/{id}`) accept an `Idempotency-Key` header (or an `idempotency_key` body field) so retries are safe.
+Money-moving endpoints (LayerX `POST /v1/pay`, Chronos `POST /v1/alarms`, Deus `POST /v1/invoke/{id}`) accept an `idempotency_key` field so retries are safe. On conflict the original result is returned.
+
+### Response envelope
+
+Chronos and LayerX use a uniform `{ok, data, error}` JSON envelope:
+
+```json
+{"ok": true, "data": { ... }}
+```
+
+```json
+{"ok": false, "error": {"code": "unauthorized", "message": "...", "retryable": false}}
+```
+
+### Rate limiting
+
+LayerX enforces per-client IP token-bucket rate limiting with three classes: read (explorer), write (pay/withdraw), and auth (challenge/verify). Responses include `Retry-After` headers.
 
 <Card title="CLI reference" icon="terminal" href="/api-reference/cli">
   The command-line surfaces: `mclc`, `mcl-execute`, `mcl-tools`, `deusctl`, `neo`.

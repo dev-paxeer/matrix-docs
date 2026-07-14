@@ -1,48 +1,161 @@
 ---
 title: Chronos API
-description: "The centralized agent scheduler — agent DID authentication plus create, list, get, and cancel alarms that wake an agent at a scheduled time."
+description: "The centralized agent scheduler: agent DID authentication plus create, list, get, and cancel alarms that wake an agent at a scheduled time."
 ---
 
-**Chronos** is the centralized agent scheduler / wake-up system. Agents authenticate with their DID, then create alarms that fire a wake at a scheduled time.
+**Chronos** (`chronosd`) is the centralized agent scheduler and wake-up system. Agents authenticate with their DID, then create alarms that fire a wake at a scheduled time. Chronos uses two-layer auth: a shared transport bearer (`CHRONOS_TOKEN`) proves the caller is a legitimate Matrix daemon, and an ed25519 agent-DID principal token (`X-Chronos-Agent`) proves which owner is calling.
 
 ## Routes
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| GET | `/healthz` | Liveness. |
-| GET | `/` | Service root / info. |
-| POST | `/v1/agent/auth/challenge` | Request a nonce for the agent DID. |
-| POST | `/v1/agent/auth/verify` | Verify the signed nonce → session token. |
-| POST | `/v1/alarms` | Create an alarm. |
-| GET | `/v1/alarms` | List the agent's alarms. |
-| GET | `/v1/alarms/{id}` | Get one alarm. |
-| DELETE | `/v1/alarms/{id}` | Cancel an alarm. |
+| GET | `/healthz` | Unauthenticated liveness (pings database) |
+| GET | `/` | Service root: name, version, health link |
+| POST | `/v1/agent/auth/challenge` | Request a nonce for the agent DID |
+| POST | `/v1/agent/auth/verify` | Verify the signed nonce, mint a session token |
+| POST | `/v1/alarms` | Create an alarm |
+| GET | `/v1/alarms` | List the agent's alarms |
+| GET | `/v1/alarms/{id}` | Get one alarm |
+| DELETE | `/v1/alarms/{id}` | Cancel an alarm |
 
 ## Authentication
 
-See the [shared agent DID handshake](/api-reference/overview#agent-did-authentication): `POST /v1/agent/auth/challenge` → sign the nonce → `POST /v1/agent/auth/verify`.
+Two-layer auth on all `/v1/*` paths:
+
+1. **Transport bearer** -- `Authorization: Bearer <CHRONOS_TOKEN>` proves the caller is a Matrix daemon.
+2. **Principal token** -- `X-Chronos-Agent: <token>` proves which agent/owner. Minted via the challenge/verify handshake below.
+
+See the [shared agent DID handshake](/api-reference/overview#agent-did-authentication).
+
+### Challenge
+
+`POST /v1/agent/auth/challenge`
+
+<ParamField body="did" type="string" required>
+  The agent DID (`did:matrix:<owner_user_id>:<key_fingerprint>`).
+</ParamField>
+
+Returns a nonce and the exact message to sign. The nonce is single-use and expires after the configured TTL.
+
+### Verify
+
+`POST /v1/agent/auth/verify`
+
+<ParamField body="did" type="string" required>
+  The agent DID.
+</ParamField>
+<ParamField body="public_key" type="string" required>
+  Hex-encoded ed25519 public key (must match the DID fingerprint).
+</ParamField>
+<ParamField body="nonce" type="string" required>
+  The nonce from the challenge response.
+</ParamField>
+<ParamField body="signature" type="string" required>
+  Hex-encoded ed25519 signature over `matrix-chronos-auth:<did>:<nonce>`.
+</ParamField>
+
+Returns a short-lived HMAC principal token and the owner user ID.
 
 ## Create an alarm
 
-<ParamField body="fire_at" type="string (ISO 8601)" required>
-  When the alarm should fire.
+`POST /v1/alarms` requires the `X-Chronos-Agent` principal token.
+
+<ParamField body="kind" type="string" required>
+  `once` or `cron`.
+</ParamField>
+<ParamField body="wake_message" type="string" required>
+  The contextful turn delivered to the agent on wake.
+</ParamField>
+<ParamField body="delay_seconds" type="integer">
+  For `once`: seconds from now until fire.
+</ParamField>
+<ParamField body="fire_at" type="string (ISO 8601)">
+  For `once`: absolute fire time.
+</ParamField>
+<ParamField body="cron_expr" type="string">
+  For `cron`: a standard cron expression (5-field).
+</ParamField>
+<ParamField body="timezone" type="string">
+  For `cron`: IANA timezone (default `UTC`).
+</ParamField>
+<ParamField body="label" type="string">
+  Human-readable label for the alarm.
+</ParamField>
+<ParamField body="conversation_id" type="string">
+  Conversation to resume on wake.
 </ParamField>
 <ParamField body="payload" type="object">
   Opaque data delivered to the agent on wake.
+</ParamField>
+<ParamField body="idempotency_key" type="string">
+  Deduplicates retries; same key + owner returns the existing alarm.
+</ParamField>
+<ParamField body="max_failures" type="integer">
+  Max consecutive failures before terminal fail (default 5).
 </ParamField>
 
 <RequestExample>
 ```bash cURL
 curl -X POST https://chronos.example/v1/alarms \
-  -H "Authorization: Bearer $CHRONOS_SESSION" \
+  -H "Authorization: Bearer $CHRONOS_TOKEN" \
+  -H "X-Chronos-Agent: $PRINCIPAL_TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"fire_at": "2026-06-20T09:00:00Z", "payload": {"task": "daily-digest"}}'
+  -d '{
+    "kind": "once",
+    "delay_seconds": 3600,
+    "wake_message": "Time for your daily digest.",
+    "label": "daily-digest"
+  }'
+```
+
+```bash cURL (cron)
+curl -X POST https://chronos.example/v1/alarms \
+  -H "Authorization: Bearer $CHRONOS_TOKEN" \
+  -H "X-Chronos-Agent: $PRINCIPAL_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "kind": "cron",
+    "cron_expr": "0 9 * * *",
+    "timezone": "America/New_York",
+    "wake_message": "Morning briefing time.",
+    "conversation_id": "conv_abc123"
+  }'
 ```
 </RequestExample>
 
 <ResponseField name="id" type="string" required>
   The alarm identifier (used for get/cancel).
 </ResponseField>
-<ResponseField name="status" type="string">
-  `scheduled`, `fired`, or `cancelled`.
+<ResponseField name="next_fire_at" type="string">
+  ISO 8601 timestamp of the next scheduled fire.
 </ResponseField>
+<ResponseField name="status" type="string">
+  `active`, `fired`, `cancelled`, or `failed`.
+</ResponseField>
+
+## List alarms
+
+`GET /v1/alarms?limit=100` returns the caller's alarms, most-recent first. The `limit` query parameter defaults to 100 (max 500).
+
+## Get an alarm
+
+`GET /v1/alarms/{id}` returns a single alarm by ID, owner-checked.
+
+## Cancel an alarm
+
+`DELETE /v1/alarms/{id}` marks an active alarm as cancelled. Already-fired or already-cancelled alarms return success without modification.
+
+## Alarm lifecycle
+
+| Status | Meaning |
+| --- | --- |
+| `active` | Scheduled and waiting to fire |
+| `fired` | Successfully delivered (once alarms are terminal) |
+| `cancelled` | Manually cancelled by the owner |
+| `failed` | Retries exhausted (once alarms are terminal; cron alarms skip and advance) |
+
+Cron alarms automatically reschedule after each successful fire. Failed cron fires use a bounded backoff ladder: retry, then skip-and-advance so one bad fire does not wedge the series.
+
+<Info>
+All alarm operations are idempotent on the `idempotency_key`. Concurrent dispatchers use `FOR UPDATE SKIP LOCKED` to avoid double-claiming.
+</Info>

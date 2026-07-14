@@ -1,37 +1,92 @@
 ---
 title: UWAC API
-description: "Universal Web Agent Connector — agent DID auth plus connect/callback/disconnect for the OAuth vault and a unified invoke surface for per-user external tools."
+description: "Universal Web App Connectors: agent DID auth plus connect, callback, disconnect, and invoke for the OAuth vault that turns external app credentials into per-user MCP tools."
 ---
 
-**UWAC** (Universal Web Agent Connector) is an OAuth vault that turns a user's connected third-party accounts into per-user MCP tools. Agents authenticate with their DID, connect accounts via OAuth, then invoke connector tools through a single surface.
+**UWAC** (Universal Web App Connectors) is the Matrix control plane that lets an agent act inside a user's external apps (Gmail, Calendar, and more) without the agent ever holding the OAuth token. The token is vaulted server-side; only scoped results return to the daemon. The OAuth token never crosses the wire to the agent.
+
+## Architecture
+
+```
+agent (per-user daemon)
+  |  MCP stdio
+  v
+tools/uwac/uwac.mjs --HTTP--> uwacd (shared Fly app)
+                                + agent-DID auth (challenge/verify, ed25519)
+                                + OAuth connect (GoTrue scope-elevation PKCE)
+                                + token vault (AES-256-GCM at rest)
+                                + tool invoke (scope+consequence gate -> provider API)
+                                      |
+                                      v injects token server-side
+                                Google / GitHub / Slack / ...
+```
 
 ## Routes
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| GET | `/healthz` | Liveness. |
-| GET | `/` | Service root / info. |
-| POST | `/v1/agent/auth/challenge` | Request a nonce for the agent DID. |
-| POST | `/v1/agent/auth/verify` | Verify the signed nonce → session token. |
-| POST | `/v1/connect` | Begin an OAuth connect flow for a connector. |
-| GET | `/v1/connect/callback` | OAuth redirect callback (completes the connection). |
-| POST | `/v1/disconnect` | Revoke and remove a connection. |
-| POST | `/v1/invoke` | Invoke a connector tool with the stored credential. |
+| GET | `/healthz` | Liveness |
+| GET | `/` | Service root / info |
+| POST | `/v1/agent/auth/challenge` | Request a nonce for the agent DID |
+| POST | `/v1/agent/auth/verify` | Verify the signed nonce, mint a session token |
+| POST | `/v1/connect` | Begin an OAuth connect flow for a connector |
+| GET | `/v1/connect/callback` | OAuth redirect callback (completes the connection) |
+| POST | `/v1/disconnect` | Revoke and remove a connection |
+| POST | `/v1/invoke` | Invoke a connector tool with the stored credential |
+
+## Authentication
+
+Two-layer auth:
+
+1. **Transport bearer** -- shared `MATRIX_UWAC_TOKEN` proves the caller is a Matrix daemon (router-injected).
+2. **Principal** -- the daemon's ed25519 executor key signs a challenge; uwacd resolves the owner Supabase `user_id` from the DID label (`did:matrix:<user_id>:<keyfp>`), which is the same ID that consented the app via GoTrue.
+
+The OAuth token never crosses the wire to the daemon.
 
 ## Connect flow
 
 <Steps>
   <Step title="Start">
-    `POST /v1/connect` with the connector id returns an authorization URL. Send the user there.
+    `POST /v1/connect` with the connector ID returns an authorization URL. Send the user there.
   </Step>
   <Step title="Callback">
-    The provider redirects to `GET /v1/connect/callback`; UWAC exchanges the code and stores the credential in the vault.
+    The provider redirects to `GET /v1/connect/callback`; UWAC exchanges the code and stores the credential in the vault (AES-256-GCM at rest).
   </Step>
   <Step title="Invoke">
-    `POST /v1/invoke` runs a connector tool on the user's behalf using the vaulted credential — exposed to the agent as an MCP tool.
+    `POST /v1/invoke` runs a connector tool on the user's behalf using the vaulted credential, exposed to the agent as an MCP tool.
   </Step>
 </Steps>
+
+## Connector tools
+
+Each connected app exposes scoped tools as MCP tools. The tool registry is generated from the Go source of truth and advertised via `uwac-tools.json`.
+
+Current connectors:
+
+| Connector | Tools | Scopes |
+| --- | --- | --- |
+| `google-workspace` | Gmail (send, search, read), Calendar (list, create, update) | `gmail.modify`, `calendar.events` |
+
+Additional connectors (GitHub, Slack) are planned.
+
+## MCP integration
+
+The stdio MCP proxy at `tools/uwac/uwac.mjs` bridges the daemon's MCP tool manager to uwacd over HTTP. It reads the tool registry from `uwac-tools.json` and forwards calls to the UWAC invoke endpoint.
+
+Regenerate the tool registry:
+```bash
+go run ./cmd/uwacd -dump-tools > ../tools/uwac/uwac-tools.json
+```
+
+Self-test the proxy:
+```bash
+node ../tools/uwac/uwac.mjs --selftest
+```
 
 <Info>
 Credentials live in the vault, never in agent manifests or prompts. The agent only ever sees a tool surface, not the underlying tokens.
 </Info>
+
+## Status
+
+First slice implemented end-to-end: agent-DID auth, GoTrue scope-elevation connect, in-memory encrypted vault, and the `google-workspace` connector (Gmail + Calendar). Not yet wired: Postgres-backed vault + background refresher, marketplace UI, and production deploy.

@@ -1,29 +1,63 @@
 ---
 title: Server Templates
-description: "The mcp-server-templates.json catalog — ready-to-copy MCP server definitions for popular integrations like GitHub, Supabase, Playwright, Cloudflare, and more."
+description: "The mcp-server-templates.json catalog: ready-to-copy MCP server definitions for GitHub, Supabase, Playwright, Cloudflare, Jira, and more."
 ---
 
-`agents/mcp-server-templates.json` is a catalog of ready-to-copy MCP server definitions. Copy the servers you need into an agent manifest (Matrix form) or a `~/.claude.json` `mcpServers` block, then replace the `YOUR_*_HERE` placeholders.
+`agents/mcp-server-templates.json` is a catalog of ready-to-copy MCP server definitions. It covers popular integrations across developer tools, cloud platforms, databases, and AI services.
 
-## Selected templates
+## Using the templates
+
+Copy the servers you need into your agent manifest or MCP client configuration, then replace the `YOUR_*_HERE` placeholders with real credentials.
+
+<Note>
+These templates use the generic `mcpServers` shape. To use one in a Matrix agent manifest, translate it to the [agent-manifest schema](/mcp/agent-manifests): add an `alias`, `version`, `package_digest`, an exhaustive `tools` list, and convert env secrets to `$env:NAME` refs.
+</Note>
+
+## Developer tools
 
 | Server | Launch | Description |
 | --- | --- | --- |
-| `github` | `npx @modelcontextprotocol/server-github` | PRs, issues, repos. |
-| `supabase` | `npx @supabase/mcp-server-supabase` | Supabase database operations. |
-| `playwright` | `npx @playwright/mcp` | Browser automation and testing. |
-| `firecrawl` | `npx firecrawl-mcp` | Web scraping and crawling. |
-| `exa-web-search` | `npx exa-mcp-server` | Web search and research via Exa. |
-| `context7` | `npx @upstash/context7-mcp` | Live documentation lookup. |
-| `jira` / `confluence` | `uvx mcp-atlassian` / `npx confluence-mcp-server` | Atlassian issue tracking + wiki. |
-| `vercel` / `railway` | `http` / `npx @railway/mcp-server` | Deployment platforms. |
-| `cloudflare-*` | `http` (docs, builds, bindings, observability) | Cloudflare surfaces. |
-| `clickhouse` | `http` | Analytics queries. |
-| `memory` / `omega-memory` | `npx @modelcontextprotocol/server-memory` / `uvx omega-memory` | Persistent memory. |
+| `github` | `npx @modelcontextprotocol/server-github` | PRs, issues, repos, code search. |
+| `jira` | `uvx mcp-atlassian` | Jira issue tracking: search, create, update, transition. |
+| `confluence` | `npx confluence-mcp-server` | Confluence Cloud: search pages, retrieve content, explore spaces. |
+| `memory` | `npx @modelcontextprotocol/server-memory` | Persistent memory across sessions. |
+| `omega-memory` | `uvx omega-memory serve` | Persistent agent memory with semantic search and knowledge graphs. |
 | `sequential-thinking` | `npx @modelcontextprotocol/server-sequential-thinking` | Chain-of-thought reasoning. |
-| `fal-ai` | `npx fal-ai-mcp-server` | AI image/video/audio generation. |
+
+## Cloud and deployment
+
+| Server | Launch | Description |
+| --- | --- | --- |
+| `vercel` | `http` (https://mcp.vercel.com) | Vercel deployments and projects. |
+| `railway` | `npx @railway/mcp-server` | Railway deployments. |
+| `cloudflare-docs` | `http` | Cloudflare documentation search. |
+| `cloudflare-workers-builds` | `http` | Cloudflare Workers builds. |
+| `cloudflare-workers-bindings` | `http` | Cloudflare Workers bindings. |
+| `cloudflare-observability` | `http` | Cloudflare observability and logs. |
+
+## Data and search
+
+| Server | Launch | Description |
+| --- | --- | --- |
+| `supabase` | `npx @supabase/mcp-server-supabase` | Supabase database operations. |
+| `clickhouse` | `http` (https://mcp.clickhouse.cloud/mcp) | ClickHouse analytics queries. |
+| `firecrawl` | `npx firecrawl-mcp` | Web scraping and crawling. |
+| `exa-web-search` | `npx exa-mcp-server` | Web search and research via Exa API. |
+| `context7` | `npx @upstash/context7-mcp` | Live documentation lookup for any library. |
+
+## Browser and media
+
+| Server | Launch | Description |
+| --- | --- | --- |
+| `playwright` | `npx @playwright/mcp` | Browser automation and testing via Playwright. |
+| `browserbase` | `npx @browserbasehq/mcp-server-browserbase` | Cloud browser sessions. |
+| `browser-use` | `http` (https://api.browser-use.com/mcp) | AI browser agent for web tasks. |
+| `fal-ai` | `npx fal-ai-mcp-server` | AI image, video, and audio generation via fal.ai. |
+| `magic` | `npx @magicuidesign/mcp` | Magic UI components. |
 
 ## stdio vs http templates
+
+The two transport types have different launch shapes:
 
 ```json
 "github": {
@@ -31,7 +65,10 @@ description: "The mcp-server-templates.json catalog — ready-to-copy MCP server
   "args": ["-y", "@modelcontextprotocol/server-github"],
   "env": { "GITHUB_PERSONAL_ACCESS_TOKEN": "YOUR_GITHUB_PAT_HERE" },
   "description": "GitHub operations - PRs, issues, repos"
-},
+}
+```
+
+```json
 "vercel": {
   "type": "http",
   "url": "https://mcp.vercel.com",
@@ -39,10 +76,17 @@ description: "The mcp-server-templates.json catalog — ready-to-copy MCP server
 }
 ```
 
+`stdio` servers are spawned as local subprocesses. `http` servers are contacted over the network and may require `headers` for authentication.
+
 <Info>
-The catalog's own guidance: replace `YOUR_*_HERE` with real values, and keep under ~10 servers enabled at once to preserve the context window.
+Replace `YOUR_*_HERE` with real values before use. Keep under 10 MCP servers enabled at once to preserve the model's context window.
 </Info>
 
-<Note>
-These templates use the generic `mcpServers` shape. To use one in a Matrix agent, translate it to the [agent-manifest schema](/mcp/agent-manifests) — add an `alias`, `version`, `package_digest`, and an exhaustive `tools` list, and convert env secrets to `$env:NAME` refs.
-</Note>
+<Columns cols={2}>
+  <Card title="Agent manifests" icon="file-code" href="/mcp/agent-manifests">
+    How to declare servers in a Matrix manifest.
+  </Card>
+  <Card title="Writing a tool bridge" icon="screwdriver-wrench" href="/mcp/writing-a-tool-bridge">
+    Build a custom MCP server from scratch.
+  </Card>
+</Columns>

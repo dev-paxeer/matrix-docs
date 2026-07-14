@@ -1,6 +1,6 @@
 ---
 title: Writing a Tool Bridge
-description: "Add a new MCP server to a Matrix agent — declare the server in the manifest, enumerate its tools exhaustively, pin the package digest, wire credentials, and verify the bijection."
+description: "Add a new MCP server to a Matrix agent: declare the server in the manifest, enumerate its tools, pin the package digest, wire credentials, and verify the bijection."
 ---
 
 Adding a capability to an agent means adding an MCP server to its manifest. Matrix never calls undeclared tools, so the manifest is the single source of truth.
@@ -17,44 +17,156 @@ Adding a capability to an agent means adding an MCP server to its manifest. Matr
       "args": ["-y", "@modelcontextprotocol/server-github"],
       "env": ["GITHUB_TOKEN=$env:GITHUB_TOKEN"],
       "version": "2025.1.0",
-      "package_digest": "sha256:…",
+      "package_digest": "sha256:...",
+      "tools": []
+    }
+    ```
+
+    For `http` servers, use `url` and optional `headers` instead of `command` and `args`:
+
+    ```json
+    {
+      "alias": "vercel",
+      "transport": "http",
+      "url": "https://mcp.vercel.com",
+      "headers": ["Authorization=$env:VERCEL_TOKEN"],
+      "version": "2025.1.0",
+      "package_digest": "sha256:...",
       "tools": []
     }
     ```
   </Step>
   <Step title="Enumerate every tool">
-    The `tools` array must list **exactly** what the server advertises — name, description, and `side_effect_class`. The manager rejects any drift at boot (Q21).
+    The `tools` array must list **exactly** what the server advertises: name, description, and `side_effect_class`. The manager rejects any drift at boot.
 
     ```json
     "tools": [
-      {"name": "create_issue", "description": "Open an issue", "side_effect_class": "network"},
-      {"name": "list_issues",  "description": "List issues",  "side_effect_class": "network"}
+      {
+        "name": "create_issue",
+        "description": "Open a new GitHub issue",
+        "side_effect_class": "network"
+      },
+      {
+        "name": "list_issues",
+        "description": "List issues in a repository",
+        "side_effect_class": "network"
+      },
+      {
+        "name": "create_pull_request",
+        "description": "Open a new pull request",
+        "side_effect_class": "network"
+      }
     ]
     ```
+
+    Each tool must declare one of `read`, `write`, `network`, or `shell` as its `side_effect_class`. Choose the lightest class that accurately describes the tool's behavior.
   </Step>
   <Step title="Pin the package digest">
-    Compute the sha256 of the published package and set `package_digest` (`sha256:<64-hex>`). Bump `version` to match — it forms the tool URI pin.
+    Compute the sha256 of the published package and set `package_digest` to `sha256:<64-hex>`. Bump `version` to match; it forms the tool URI pin.
+
+    ```bash
+    sha256sum package.tgz
+    ```
   </Step>
   <Step title="Wire credentials safely">
-    Reference secrets as `$env:NAME`, never literals. The executor resolves them from its own environment at spawn time.
+    Reference secrets as `$env:NAME`, never as literal values. The executor resolves them from its own environment at spawn time.
+
+    ```json
+    "env": ["GITHUB_TOKEN=$env:GITHUB_TOKEN"]
+    ```
+
+    For `http` servers, credentials go in `headers`:
+
+    ```json
+    "headers": ["Authorization=$env:API_KEY"]
+    ```
   </Step>
   <Step title="Verify the bijection">
-    Run `mcl-tools verify -manifest agents/<name>.json`. It spawns each server and asserts declared tools == discovered tools. Use `mcl-tools list` / `describe` / `call` to inspect and test.
+    Run the verification tool against your manifest. It spawns each server and asserts that declared tools equal discovered tools. Any mismatch is a boot-time fatal error, so catching it early saves debugging time.
   </Step>
   <Step title="Grant the tool to a skill">
-    A plan can only call a tool a skill declares. Add the version-pinned URI to the skill's `§TOOLS`:
+    A plan can only call tools that a skill declares. Add the version-pinned URI to the skill's `§TOOLS` section:
 
     ```mtx
     §TOOLS
     matrix://tool/mcp/github/create_issue@2025.1.0
+    matrix://tool/mcp/github/list_issues@2025.1.0
     ```
   </Step>
 </Steps>
 
 <Warning>
-The side-effect class of every tool must be covered by the manifest's `allowed_side_effects`. A `shell` tool on an agent that only allows `read`/`network` will be refused by the capability gate.
+The side-effect class of every tool must be covered by the manifest's `allowed_side_effects`. A `shell` tool on an agent that only allows `read` and `network` will be refused by the capability gate.
 </Warning>
 
-<Card title="MCP overview" icon="plug" href="/mcp/overview">
-  The resolution, bijection, and gating model in full.
-</Card>
+## How tool bridges work internally
+
+A tool bridge is a process that speaks the MCP wire protocol over `stdio` (newline-delimited JSON-RPC) or `http` (Streamable HTTP). The bridge handles three methods:
+
+| Method | Purpose |
+| --- | --- |
+| `initialize` | Handshake: return server name, version, and capabilities. |
+| `tools/list` | Return the full list of tools with names, descriptions, and input schemas. |
+| `tools/call` | Execute a tool by name with arguments, return the result. |
+
+For `stdio` bridges, the daemon spawns the process and communicates over stdin/stdout. For `http` bridges, the daemon acts as an HTTP client.
+
+A typical `stdio` bridge in Node.js:
+
+```javascript
+import { createInterface } from 'node:readline'
+
+const tools = [
+  {
+    name: 'my_tool',
+    description: 'Does something useful',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: 'What to look up' }
+      },
+      required: ['query']
+    }
+  }
+]
+
+const handlers = {
+  initialize: (params) => ({
+    protocolVersion: params?.protocolVersion ?? '2024-11-05',
+    serverInfo: { name: 'my-server', version: '0.1.0' },
+    capabilities: { tools: {} },
+  }),
+  'tools/list': () => ({ tools }),
+  'tools/call': async (params) => {
+    const { name, arguments: args } = params
+    // dispatch to your tool implementation
+    const result = await handleTool(name, args)
+    return {
+      content: [{ type: 'text', text: JSON.stringify(result) }],
+      isError: false,
+    }
+  },
+}
+
+function send(obj) { process.stdout.write(JSON.stringify(obj) + '\n') }
+
+const rl = createInterface({ input: process.stdin })
+rl.on('line', async (line) => {
+  const req = JSON.parse(line)
+  const fn = handlers[req.method]
+  if (!fn) return
+  const result = await fn(req.params)
+  if (req.id !== undefined && result !== null) {
+    send({ jsonrpc: '2.0', id: req.id, result })
+  }
+})
+```
+
+<Columns cols={2}>
+  <Card title="Server templates" icon="copy" href="/mcp/server-templates">
+    Ready-to-copy server definitions for popular services.
+  </Card>
+  <Card title="MCP overview" icon="plug" href="/mcp/overview">
+    The resolution, bijection, and gating model in full.
+  </Card>
+</Columns>

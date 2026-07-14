@@ -1,47 +1,50 @@
 ---
 title: Architecture
-description: "The layered Matrix model — MCL compiler, cortex memory, bridge, executor walker, and the surrounding service modules — plus the cross-cutting compile / execute / replay flows."
+description: "The layered Matrix model: Neo conversational agent, Cortex per-actor memory, MCL compiler, Executor plan walker, and surrounding service modules."
 ---
 
-Matrix is a polyglot monorepo built around a shared execution stack: MCL compiles intent, `bridge` connects the compiler to a live `cortex`, `executor` turns plans into work, and the surrounding modules handle operator control, settlement, routing, and service integration.
+Matrix is a polyglot monorepo built around a shared execution stack. Neo handles conversational interaction through a recursive LLM tool-calling loop. Cortex provides per-actor persistent typed memory on Pebble. MCL compiles natural-language intents into a typed Intent IR through MatrixScript. The executor walks plans and dispatches MCP tools. The surrounding modules handle settlement, scheduling, routing, and service integration.
 
 <Note>
-The canonical source of truth is split: design decisions live in `research/` (chapters 00–06), and project state (phase status, locked Q-decisions, invariants) lives in `knowledge/matrix.kvx`. If anything here contradicts `matrix.kvx`, the kvx wins.
+The canonical source of truth is split: design decisions live in `research/` (chapters 00-06), and project state (phase status, locked Q-decisions, invariants) lives in `knowledge/matrix.kvx`. If anything here contradicts `matrix.kvx`, the kvx wins.
 </Note>
 
 ## Layered model
 
 ```text
-                              user prose
-                                  │
-                                  ▼
-          ┌───────────────────────────────────────────────┐
-          │                 MCL compiler                   │
-          │  lexer → parser → validator → canonical        │
-          │     \                                  /        │
-          │      → interpreter ← LLM ← grammar             │
-          │              │                                 │
-          │              ▼                                 │
-          │          Intent IR  (closed verb, closed kind) │
-          └──────────────────────┬────────────────────────┘
-                                  ▼
-                            ┌─────────────┐
-                            │   bridge    │  MCL.Cortex adapter
-                            └──────┬──────┘
-                                   ▼
-   ┌──────────────────┐    ┌───────────────┐    ┌──────────────────┐
-   │  agent manifest  │───▶│    cortex     │◀───│ executor walker  │
-   │  (DID-bound)     │    │   (Pebble)    │    │ + MCP dispatch   │
-   └──────────────────┘    └───────┬───────┘    └────────┬─────────┘
-                                   │                     ▼
-                                   │             ┌───────────────┐
-                                   │             │  MCP servers  │
-                                   │             │  (subprocess) │
-                                   │             └───────┬───────┘
-                                   └──────── events ──────┘
-                                              │
-                                              ▼
-                                      attest + EMA loop
+                         user message
+                              |
+                              v
+          +-------------------------------------------+
+          |              Neo (agent loop)              |
+          |  pack window -> compact -> call model ->   |
+          |  run tools -> loop (ErrIncomplete = retry) |
+          +--------------------+----------------------+
+                               |
+            core_execute       |  memory_recall
+            (MCL delegation)   |  (cortex retrieval)
+                               v
+          +-------------------------------------------+
+          |               MCL compiler                 |
+          |  lexer -> parser -> validator -> canonical  |
+          |     \                                  /    |
+          |      -> interpreter <- LLM <- grammar      |
+          |              |                             |
+          |              v                             |
+          |          Intent IR  (closed verb, kind)    |
+          +--------------------+----------------------+
+                               v
+                         +-----------+
+                         | executor  |  lifecycle + plan walker
+                         +-----+-----+
+                               |
+                               v
+   +----------------+    +-----------+    +------------------+
+   |   Cortex       |    |  bridge   |    |   MCP servers    |
+   |  (Pebble DB)   |<-->| (adapter) |    |  (subprocess)    |
+   +-------+--------+    +-----------+    +------------------+
+           |                                      |
+           +---- events ----> attest + EMA loop --+
 ```
 
 ## The core Go modules
@@ -49,51 +52,104 @@ The canonical source of truth is split: design decisions live in `research/` (ch
 Each is independently `go build`/`go test`able with its own `go.mod`. Cross-module imports use `replace` directives during development and explicit versions on publish.
 
 <Columns cols={2}>
-  <Card title="cortex" icon="database">
-    Per-actor typed memory graph on Pebble. Authoritative, byte-deterministic, replay-rebuildable.
+  <Card title="Neo" icon="comments">
+    Recursive LLM tool-calling loop. Transcript-as-state, two-model architecture, cortex-backed memory, swarm sub-agents, Automatrix autonomous execution, SSE event streaming.
+  </Card>
+  <Card title="Cortex" icon="database">
+    Per-actor typed memory graph on Pebble. 14 phases: typed taxonomy, salience-ranked queries, HNSW vector search, Merkle snapshots, EMA weight learning, sub-agent scoping, replay invariant.
   </Card>
   <Card title="MCL" icon="diagram-project">
-    MatrixScript compiler. Turns prose + a `SKILL.mtx` + a verb hint into an Intent IR.
+    MatrixScript compiler. Turns prose + a `SKILL.mtx` + a verb hint into an Intent IR. The Go runtime in `mtx/` interprets `.mtx` files; compiler logic is meta-programmed.
   </Card>
-  <Card title="bridge" icon="link">
-    Stateless adapter wiring the MCL compiler's `Cortex` interface to a live `*cortex.Cortex`.
-  </Card>
-  <Card title="executor" icon="gears">
-    Lifecycle machine, runtime walker, MCP client + tool registry, per-user daemon, e2e harness.
+  <Card title="Executor" icon="gears">
+    Lifecycle state machine, plan-tree DFS walker, MCP-backed tool dispatch, materiality classification, intent attestation. 22 locked design decisions.
   </Card>
 </Columns>
 
-Surrounding service modules: `neo` (conversational agent), `gateway` (metered LLM proxy + PAX ledger), `router` (Fly Machine provisioning), `deus` (marketplace), `layerx` (settlement), `uwac` (web connectors), `tachyon` (EVM engine), and `chronos` (scheduler).
+Surrounding service modules: `gateway` (metered LLM proxy with PAX ledger), `router` (Fly Machine provisioning), `deus` (service marketplace/registry), `layerx` (agent-native settlement with USDX/USDL, Merkle receipts, DID-based accounts), `chronos` (scheduler with dispatch worker and wake delivery), `tachyon` (smart contract engine), and `uwac` (web connectors).
+
+## Neo: the conversational agent
+
+Neo is the default user-facing agent. Its core loop in `matrix/neo/internal/agent` implements a recursive LLM tool-calling cycle:
+
+- **Transcript-as-state.** The conversation IS the state. The model sees the working window and decides what to do next. No hidden state machine, no plan tree.
+- **Two-model architecture.** A main model (conversational, tool-calling) and a cheap model (compaction, validation, write-back). Sub-agents use the main model with extended reasoning OFF to cut latency.
+- **Context budget with thresholds.** Soft (80%) triggers cooperative compaction at a clean boundary; hard (92%) forces it as a runaway backstop.
+- **ErrIncomplete recovery.** When the loop stalls or exhausts its step budget, it returns `ErrIncomplete`. The supervisor respawns a fresh agent over durable state rather than surfacing a fake "Done".
+- **Swarm sub-agents.** `spawn_subagents` fans tasks out to concurrent headless agents, each in its own isolated context window. Heavy tool work stays in sub-agent windows; only distilled results return.
+- **Automatrix.** Autonomous opportunity execution: Chronos wakes Neo on a recurring schedule, the governor picks opportunities, and a supervised run executes on the restricted (no-money) tool surface.
+- **Memory pager.** Pins identity + rules + active goal every turn; page-faults top-K relevant cortex records via HNSW vector search or salience ranking.
+- **SSE event stream.** POST /chat + GET /events contract with per-run replay buffer, live tool-call transparency, and workspace surface classification (terminal, browser, editor, search, media, action).
+
+## Cortex: the persistent memory store
+
+Cortex is the ground truth for all durable agent memory. One Pebble DB per actor; all namespaces are key prefixes. 14 phases of implementation:
+
+- **Phase 1-3:** Pebble shell, typed memory taxonomy (9 types), Write/Update/Tombstone, predicate-indexed Find with secondary index (`idx/tag`), salience-cold ranking.
+- **Phase 4:** Auto-form generation (short/medium/full), budget-aware Find rendering with token counting.
+- **Phase 5:** Async embedding pipeline + pure-Go HNSW vector index + `Find Near` / `Find NearURI`.
+- **Phase 6:** 14 typed edge types, `AddEdge`/`RemoveEdge` with forward+reverse atomic writes, bounded BFS graph traversal (`Find From`/`Find Follow`).
+- **Phase 7:** Journal MMR + per-namespace SMT-256 + `OverallRoot` + `SnapshotManifest` + multi-proofs.
+- **Phase 8:** Three-tier cold-start `Context` composer (Pinned + Frame-relevant + Outcomes), `idx/frame` + `idx/actor_obj` secondary indexes.
+- **Phase 9:** Budget-aware compaction (`Compact`), checkpoint records, summarize-and-link.
+- **Phase 10:** Sub-agent `CortexScope` (Merkle-proof-bounded reads/writes), `UpdateHead` for Head-only mutations.
+- **Phase 11:** Replay invariant (`Rebuild`): drop derived, walk journal, byte-identical `OverallRoot`.
+- **Phase 11.5:** Salience instrumentation: `AccessCount` bumped by `Find` (late-binding), `Citations` bumped by `Attest`.
+- **Phase 12:** EMA per-actor salience weight learning: `KindLearnWeights` journal entries, `ColdScoreWith` with learned weights.
+- **Phase 14:** Token-bucket rate limiting on scope violations and attest entries (DoS surface guards).
+
+The load-bearing invariant: drop the derived indexes, replay the journal, expect a byte-identical `OverallRoot`. Every store mutation journals atomically; a write without a journal entry fails with `ErrBatchNoJournal`.
+
+## MCL: the compiler
+
+MCL (Matrix Communication Layer) is the compiler that turns prose + a `SKILL.mtx` + a verb hint into a typed Intent IR. The language is **MatrixScript** (`.mtx`): a declarative DSL where compiler logic, skill procedures, and the IR grammar itself are written as `.mtx` files. The Go runtime in `mtx/` interprets them; it does not contain compile logic.
+
+Pipeline: lexer (CRLF normalization, `§SECTION` headers, 2-space INDENT, `matrix://` URIs) -> parser (recursive descent following EBNF in `mtx/grammar.bnf`) -> validator (V1-V12 rules: required sections, version-pinned tool URIs, closed vocab sets) -> canonical hash (AST-hashed, comments excluded) -> interpreter (first-match-wins on-blocks, prompt interpolation, cortex slot resolution) -> Frame extraction under grammar-constrained decode.
+
+Closed vocabularies: 10 verbs (D7: `find acquire build modify deliver analyze negotiate schedule monitor delegate`) and 8 object kinds. Extensions use an `x:` prefix. Adding either requires a journaled migration.
+
+## Executor: the plan walker
+
+The executor turns an Intent IR into executed work. It owns:
+
+- **Lifecycle state machine** (`lifecycle/`): 8 states from `drafting` to `completed`/`failed`/`cancelled`. Each transition is a signed (ed25519) envelope.
+- **Plan-tree walker** (`runtime/`): DFS walk of `PlanTree` with `sequential`/`parallel` branches (parallel fans out goroutine-per-child), `tool_call` dispatch through the MCP registry, `step` nodes hitting the executor LLM, and `gate` nodes for user approval.
+- **MCP tool dispatch** (`mcp/`): JSON-RPC 2.0 client with stdio + streamable HTTP transports. Per-agent persistent MCP server processes with health-pinging, auto-reconnect, and graceful drain.
+- **Materiality classification** (`materiality/`): D9 classifier enforces that material plan modifications halt execution until re-accept.
+- **22 locked design decisions** covering module boundaries, replay determinism, tool URI scheme, credential handling, and MCP server version pinning.
 
 ## Cross-cutting flows
 
 <Steps>
-  <Step title="Compile (cold-start)">
-    `mclc compile` reads a `SKILL.mtx` + prose → lexer/parser/validator/canonical hash → the interpreter walks `§PROCEDURE` (`on verb=…` first-match-wins, prompt interpolation, `resolve slot.X <- cortex.find(...)`) → the Frame is extracted under a grammar-constrained decode → the Intent IR is hashed deterministically.
+  <Step title="Conversational (Neo)">
+    User message arrives via POST /chat. Neo packs the window (system block + working transcript + tool schemas), calls the model, runs tool calls, loops. On `ErrIncomplete`, the supervisor respawns. `core_execute` delegates to MCL for rigorous/monetary tasks. `memory_recall` searches cortex. `spawn_subagents` fans out concurrent sub-agents.
   </Step>
-  <Step title="Execute">
-    `mcl-execute walk` synthesizes a `PlanTree` from the Intent, then DFS-walks it: `sequential`/`parallel` branches, `tool_call → Registry.Get(uri) → Tool.Call`, `step → StepHandler`, `gate → GateHandler`. Each step journals a cortex Event; lifecycle envelopes are signed (ed25519).
+  <Step title="Compile (MCL)">
+    `mclc compile` reads a `SKILL.mtx` + prose -> lexer/parser/validator/canonical hash -> interpreter walks `§PROCEDURE` on-blocks -> Frame extracted -> Intent IR hashed deterministically. D13 pre-resolution mandatory before user sign-off.
+  </Step>
+  <Step title="Execute (Executor)">
+    `mcl-execute walk` synthesizes a `PlanTree` from the Intent, then DFS-walks it: `sequential`/`parallel` branches, `tool_call -> Registry.Get(uri) -> Tool.Call`, `step -> StepHandler`, `gate -> GateHandler`. Each step journals a cortex Event. Materiality classification enforced live during the walk.
   </Step>
   <Step title="Attest">
-    On a terminal state, `cortex.Attest(IntentID, Outcome, Reason, Cited[], CreatedBy)` writes `KindAttest` + `KindLearnWeights` in one atomic Pebble batch. The EMA learner pulls per-actor salience weights toward (or away from) the cited memories.
+    On a terminal state, `cortex.Attest(IntentID, Outcome, Reason, Cited[], CreatedBy)` writes `KindAttest` + `KindLearnWeights` in one atomic Pebble batch. The EMA learner pulls per-actor salience weights toward (or away from) the cited memories' factor profile.
   </Step>
-  <Step title="Replay (§13.4)">
-    `cortex-shell rebuild -verify-only` captures `OverallRoot`, drops derived state, walks heads + edges + journal in order, re-emits every derived index, and requires the post-rebuild `OverallRoot` to be byte-identical. Run on every PR by the `replay-invariant` CI job.
+  <Step title="Replay (Phase 11)">
+    `cortex.Rebuild` captures `OverallRoot`, drops derived state (`idx/`, `salience/`, `accum/`), walks `m/` + `e/` + `j/` in order, re-emits every derived index, and requires the post-rebuild `OverallRoot` to be byte-identical. Run on every PR by the `replay-invariant` CI job.
   </Step>
 </Steps>
 
 ## Production topology
 
 - **Compute:** one Fly Machine per user, auto-suspended when idle, with a per-Machine Volume at `/data`.
-- **State:** a dedicated box hosts MinIO (per-user snapshots) + Postgres (user → machine mapping) + `matrix-router`.
+- **State:** a dedicated box hosts MinIO (per-user snapshots) + Postgres (user to machine mapping) + `matrix-router`.
 - **Network:** WireGuard mesh between Machines and the box; only the router's `:443` is public.
-- **Auth:** Supabase Auth → JWT → router validates → wakes the user's Machine via the Fly Machines API → reverse-proxies.
+- **Auth:** Supabase Auth -> JWT -> router validates -> wakes the user's Machine via the Fly Machines API -> reverse-proxies.
 
 <Columns cols={2}>
   <Card title="Cortex internals" icon="database" href="/developer/cortex">
-    The memory graph, journal, salience, and snapshots.
+    The memory graph, journal, salience, snapshots, and replay invariant.
   </Card>
-  <Card title="Determinism & replay" icon="shield-halved" href="/developer/determinism-replay">
-    The invariant that makes the whole stack auditable.
+  <Card title="Neo runtime" icon="comments" href="/developer/neo">
+    The conversational agent loop, swarm, and Automatrix.
   </Card>
 </Columns>

@@ -1,68 +1,244 @@
 ---
 title: Cortex
-description: "Cortex is the per-actor typed memory graph on Pebble — append-only journal, 9-type taxonomy, salience, embeddings + HNSW, Merkle snapshots, and the load-bearing replay invariant."
+description: "Cortex is the per-actor typed memory graph on Pebble with 14 phases of implementation: typed taxonomy, salience-ranked queries, HNSW vector search, Merkle snapshots, EMA weight learning, sub-agent scoping, and the replay invariant."
 ---
 
-**Cortex** is the per-actor typed memory graph. It is authoritative, byte-deterministic, and replay-rebuildable. One Pebble DB per actor; namespaces are key prefixes.
+**Cortex** is the per-actor typed memory graph. It is authoritative, byte-deterministic, and replay-rebuildable. One Pebble DB per actor; all namespaces are key prefixes. Every store mutation journals atomically; the journal feeds a Merkle accumulator; snapshots seal the state root. Drop the derived indexes, replay the journal, roots match. That is the invariant everything else depends on.
 
 ## Key surfaces
 
 | Package | Role |
 | --- | --- |
-| `cortex.go` | Facade: `Write`, `Resolve`, `Update`, `UpdateHead`, `Tombstone`, `Find`, `Context`, `Compact`, `Attest`, `AddEdge`, `RemoveEdge`, `Snapshot`, `OverallRoot`, `Rebuild`. |
-| `store/` | Pebble shell + `BeginWrite` atomic batch + `JournalHook`. |
-| `journal/` | Append-only write log (canonical CBOR entries). |
-| `memory/` | 9-type taxonomy + canonical CBOR + validate. |
-| `keys/` | Key-prefix encoding (memory namespaces). |
-| `query/` | Predicate AST + planner + `Find` with `OrderBy`/`Form`/`Budget`. |
-| `forms/` | Per-type deterministic `Render` for `short`/`medium`/`full`. |
-| `salience/` | 5-factor cold score + EMA weight learner. |
-| `embed/` | Embedder interface + Hash stub + Fireworks API client. |
-| `vector/` | Pure-Go HNSW + persistence. |
-| `snapshot/` | MMR + SMT-256 + `SnapshotManifest` + `OverallRoot`. |
-| `scope/` | Sub-agent `CortexScope` (Merkle-proof-bounded reads). |
-| `replay/` | `DropDerived` + `Rebuild` + §13.4 verifier. |
+| `cortex.go` | Facade: `Write`, `Resolve`, `Update`, `UpdateHead`, `Tombstone`, `Find`, `Context`, `Compact`, `Attest`, `AddEdge`, `RemoveEdge`, `Snapshot`, `OverallRoot`, `Rebuild` |
+| `store/` | Pebble shell + `BeginWrite` atomic batch + `JournalHook` |
+| `journal/` | Append-only write log (canonical CBOR entries), 15+ entry kinds |
+| `memory/` | 9-type taxonomy + canonical CBOR + validate + verb/edge types |
+| `keys/` | Key-prefix encoding (memory namespaces) |
+| `query/` | Predicate AST + planner + `Find` with `OrderBy`/`Form`/`Budget` + graph BFS |
+| `forms/` | Per-type deterministic `Render` for `short`/`medium`/`full` |
+| `salience/` | 5-factor cold score + EMA weight learner + learned weight persistence |
+| `embed/` | Embedder interface + HashEmbedder stub + Fireworks API client |
+| `vector/` | Pure-Go HNSW + persistence (M=16, efC=200, efS=64) |
+| `snapshot/` | MMR + SMT-256 + `SnapshotManifest` + `OverallRoot` + `MultiProof` |
+| `scope/` | Sub-agent `CortexScope` (Merkle-proof-bounded reads/writes) |
+| `replay/` | `DropDerived` + `Rebuild` + Phase 11 verifier |
+| `embedder.go` | Async embedding worker: `StartEmbedder`/`StopEmbedder`/`DrainEmbedder` |
+| `goal_state.go` | `GoalRuntimeState` sidecar (ambient scheduler bookkeeping) |
+| `ratelimit.go` | Phase 14 token-bucket DoS guards (scope violations + attests) |
 
-## Memory taxonomy
+## Repository layout
 
-Cortex stores a closed set of typed memory records, each with deterministic rendering forms (`short` / `medium` / `full`) so the same record always serializes identically. Common types include `Goal`, `Preference`, `Constraint`, `Fact`, `Pattern`, `Event`, `ArtifactRef`, plus the execution-side `KindAttest` and `KindLearnWeights`.
+```
+cortex/
+├── go.mod
+├── cortex.go               # top-level facade
+├── attest.go               # Attest - intent-outcome salience feedback + EMA weight update
+├── compact.go              # Compact - budget-aware context compaction + checkpoint records
+├── context.go              # Context - three-tier cold-start bundle composer
+├── edges.go                # AddEdge / RemoveEdge / GetEdge / IterEdgesOut / IterEdgesIn
+├── embedder.go             # StartEmbedder / StopEmbedder / DrainEmbedder + HNSW worker
+├── goal_state.go           # GoalRuntimeState sidecar
+├── ratelimit.go            # Phase 14 token-bucket DoS guards
+├── rebuild.go              # Cortex.Rebuild facade
+├── scope_enforce.go        # VerifyScope / enforceRead / enforceWrite / logScopeViolation
+├── update_head.go          # UpdateHead - Head-only mutations without Data version bump
+├── keys/                   # all Pebble key constructors + namespace prefixes
+├── journal/                # Entry, Kind, payload types, canonical CBOR, leaf hash
+├── memory/                 # Type, Head, Version, Forms, Tombstone, data schemas, verb, edge
+├── store/                  # Open, Get, PrefixIter, JournalHook, NextSeq, WriteBatch
+├── salience/               # Score, ColdScore, ColdScoreWith, Weights, EMA helpers
+├── forms/                  # Render (short + medium), RenderFull, TruncateToTokens
+├── query/                  # Predicate AST, eval, find planner, graph BFS
+├── embed/                  # Embedder interface + HashEmbedder + API embedder
+├── vector/                 # NewIndex, Add, Search, Save, Load, MapStore, VectorStore
+├── snapshot/               # State, Snapshot, CurrentRoots, MMR, SMT, MultiProof
+├── scope/                  # Scope, Selector, Sign, Verify, KeyResolver
+├── replay/                 # Rebuild, DropDerived, VerifyPreservesRoot
+└── cmd/cortex-shell/       # smoke-test CLI
+```
+
+## Memory taxonomy (Phase 1-3)
+
+Cortex stores 9 typed memory records, each with deterministic rendering forms (`short` / `medium` / `full`) so the same record always serializes identically:
+
+| Type | Short scaffold |
+| --- | --- |
+| Identity | `{name}` or `{name} ({did})` |
+| Fact | `{predicate}({subject})={statement}` |
+| Preference | `prefers {topic} ({polarity}, strength={s:.2f})` |
+| Belief | `{stance} {statement}` |
+| Event | `{outcome} {kind} with {counterparty} cost={...}` |
+| Goal | `[{status}] {statement}` |
+| Constraint | `[{strength}] {polarity} {statement}` |
+| Capability | `{subject} can {capability} ({verified?})` |
+| Pattern | `{statement} (strength={s:.2f}, coverage={c})` |
+
+Each memory carries a `Head` (ID, type, current version, timestamps, tags, frames, visibility, declared importance) and versioned `Version` records (Data, Forms, CreatedBy, Confidence, Provenance).
+
+## Write API
+
+`cortex.Write(h, data, meta)` inserts a new memory at version 1. The atomic Pebble batch contains:
+
+- The journal entry (`j/<seq>`)
+- `meta/journal_head` bump
+- The new `MemoryHead` (`m/<id>`)
+- The new `MemoryVersion` (`mv/<id>/v/1`)
+- Predicate index keys (`idx/type`, `idx/tag`, `idx/frame`, `idx/actor_obj`)
+- Salience cache seed
+- SMT update for the memories namespace
+
+Either everything commits or nothing does. There is no path that mutates store without a corresponding journal entry (`ErrBatchNoJournal` enforces it).
 
 ## Reads: Find and Context
 
-`Find` runs a typed predicate query through a planner. It deliberately rejects unsafe queries:
+### Find
 
-<Warning>
-`Find` rejects **unbounded** queries (you must pass `Limit` OR `BudgetTokens`) and **too-broad** queries (you must pass `Type` OR `HasTag`). This keeps recall costs predictable and prevents accidental full scans.
-</Warning>
+`Find(query.Query)` runs a typed predicate query through a planner. The predicate AST supports: `Eq Ne Gt Gte Lt Lte In HasTag Matches And Or Not`.
 
-`Context` assembles a deterministic bundle (used for `{cortex.bundle}` prompt interpolation via the bridge). Compile-time `Find` does **not** journal; `LateBinding=true` does.
+Planner strategy:
+1. If the top-level And-conjunction contains `HasTag` predicates, scan `idx/tag/<sha256(tag)[:8]>` for each, intersect to candidate IDs.
+2. Else scan `idx/type/<t>` for each `Type` in the query, union to candidate IDs.
+3. Else `ErrTooBroad` (full-store scans are refused).
+
+Safety rails:
+- `Find` rejects **unbounded** queries (must pass `Limit` OR `BudgetTokens`).
+- `Find` rejects **too-broad** queries (must pass `Type` OR `HasTag`).
+- Tombstoned memories excluded by default; `IncludeTombstoned=true` opts in.
+- `LateBinding=true` journals a `KindFind` entry recording the predicate for audit.
+- Compile-time `Find` (`LateBinding=false`) does not journal.
+
+`Find Near` / `Find NearURI` do HNSW vector search. `Find From` / `Find Follow` do bounded BFS graph traversal with typed edges.
+
+### Context
+
+`Cortex.Context(opts)` assembles a deterministic three-tier cold-start bundle:
+
+1. **Pinned** - Identity + Constraint{Hard} + Goal{Active}. Tombstone-filtered. Salience-desc. Floor at 0.7.
+2. **Outcomes** - Events ordered by `(verb, ref)` tuples, created-desc, top N.
+3. **FrameRelevant** - Memories matching `(verb, kind, ref)` tuples, salience-desc.
+
+Dedup priority: Pinned > Outcomes > FrameRelevant. Global salience-asc trim across all tiers until tokens fit budget. API refusal at the type level: no `Near`/`NearVector` field exists on `ContextOpts` (cold-start with vector recall is forbidden).
 
 ## Salience and learning
 
-Recall ranking combines a **5-factor cold score** with a per-actor **EMA weight learner**. When an intent terminates, `cortex.Attest` emits `KindLearnWeights` and the EMA pulls the actor's factor weights toward (or away from) the profile of the cited memories — so memory ranking adapts to what actually proved useful.
+Recall ranking combines a 5-factor cold score with per-actor EMA weight learning.
 
-## Snapshots and proofs
+### Cold score formula
 
-State is Merkle-anchored: an **MMR** over the journal plus an **SMT-256** over current heads, committed by a single `OverallRoot()`. `CortexScope` issues Merkle-proof-bounded reads to sub-agents so a delegate can be handed a verifiable slice of memory without the whole DB.
+```
+salience(m) = (0.25*R + 0.15*A + 0.30*C + 0.20*D + 0.10*V) / 1.0
+
+R(m) = exp(-delta_t / 90d)              # recency
+A(m) = log(1+access)/log(1+1000)        # access count
+C(m) = log(1+citations)/log(1+1000)     # citation count
+D(m) = declared_importance / 10          # declared
+V(m) = vector similarity (when Near set) # vector weight
+```
+
+Pinned floor 0.7. Tombstoned ranks to 0 (filtered upstream).
+
+### EMA weight learning (Phase 12)
+
+When an intent terminates, `cortex.Attest` emits `KindLearnWeights` and the EMA (rate = 0.05) pulls the actor's factor weights toward (on success) or away from (on failure with reason in {factual_error, wrong_assumption}) the cited memories' factor profile. Weights are stored at `meta/salience_weights` (outside `OverallRoot`). `KindLearnWeights` journal entries DO contribute to `journal_root`, so replay reconstructs the same learned weight set deterministically.
+
+Phase 11.5 wires the data: `AccessCount` bumped by `Find` (late-binding), `Citations` bumped by `Attest`. These are the load-bearing training signal for Phase 12.
+
+## Edges and graph traversal (Phase 6)
+
+14 typed edge types: `derived_from`, `supersedes`, `references`, `contradicts`, `corroborates`, `consents_to`, `dispatched_to`, `attested_by`, `cited_in`, `tombstones`, `part_of`, `instance_of`, `caused_by`, `observed_by`.
+
+Each `AddEdge` writes forward (`e/from/<src>/<type>/<dst>`) and reverse (`e/to/<dst>/<type>/<src>`) keys with the same canonical CBOR bytes in one atomic batch with the journal entry. `RemoveEdge` sets `Tombstoned=true` on both directions (soft delete, audit trail preserved).
+
+`Find From` / `Find Follow` runs a hop-bounded BFS. MaxHops capped at 6. Direction modes: `DirOut`, `DirIn`, `DirBoth`. Default ordering: hop-ascending.
+
+## Snapshots and proofs (Phase 7)
+
+State is Merkle-anchored:
+
+- **MMR** over the journal (every `j/<seq>` write appends exactly one MMR leaf in the same atomic batch via `JournalHook`).
+- **SMT-256** over current heads per namespace (memories + edges). Empty-subtree compression.
+- **OverallRoot** = `sha256(domain || schema_v1 || journal_root || ns_count || lp(name)||state_root for each ns sorted)`.
+
+`Cortex.Snapshot(reason)` persists a `SnapshotManifest`. `Cortex.OverallRoot()` returns the current root without persisting. `Cortex.Proof(uris, manifest)` returns `MultiProof` for the URIs against the manifest's memories root.
+
+Storage rough-back for 100k memories + 100k edges: ~13 MB MMR nodes + ~160 MB SMT nodes + ~10 MB manifests/month. Acceptable.
+
+## Compaction (Phase 9)
+
+`Cortex.Compact(opts)` summarizes non-load-bearing memories into `{ref, short_form, salience}` stubs while keeping load-bearing and auto-detected pinned items at full fidelity. The algorithm:
+
+1. Build effective load-bearing set (caller's `LoadBearing` union auto-detected pinned items).
+2. Partition into Kept vs Compactable.
+3. Summarize Compactable items to short forms (50 tok, from write-time `Version.Forms.Short`).
+4. If post-summarization total still exceeds budget, return `ErrBudgetUnreachable` (summarize-and-link, never truncate).
+5. Write `CheckpointRecord` to `chk/<intent>/<step>` + `KindCompact` journal entry in one atomic batch.
+
+Checkpoint URI: `matrix://journal/logs/<intent>/<step>`. Optional filesystem JSON mirror (best-effort).
+
+## Sub-agent scoping (Phase 10)
+
+`CortexScope` issues Merkle-proof-bounded reads to sub-agents so a delegate can be handed a verifiable slice of memory without the whole DB.
+
+- `Scope` carries a canonical CBOR `Selector` (Types/Tags/IDs/Frame) with optional `FrameFilter` (Verb/ObjHashes).
+- `Sign(s, priv)` / `VerifySignature(s, pub)` over unsigned CBOR bytes.
+- `Verify(s, snapState, resolver, opts)` runs: schema -> empty-include reject -> expiry -> signature -> snapshot resolvability -> multi-proof.
+- Read paths (`Find`, `Context`, `ResolveScoped`) honor `q.Scope`. Multi-target reads filter silently; single-target reads journal `KindScopeViolation` on miss.
+- `UpdateHead` requires `Scope.Writable=true` for sub-agents (default deny).
+
+`UpdateHead` mutates `{Tags, Frames, DeclaredImportance, Visibility}` without bumping `Head.CurrentVersion`. Index entries are hard-deleted and re-emitted in one atomic batch.
+
+## Replay invariant (Phase 11)
+
+`Cortex.Rebuild(opts)` implements the Phase 11 replay invariant:
+
+```text
+store/      KEEP  m/  mv/  e/  j/  tomb/  snap/  chk/
+            KEEP  meta/journal_head  meta/snapshot_seq
+
+indexes/    DROP  vec/  idx/  salience/  accum/
+            DROP  meta/embed_cursor  meta/embed_vertex_next
+```
+
+After drop: walk `m/` to re-emit `idx/type`, `idx/tag`, `idx/frame`, `idx/actor_obj`, and seed `salience/<id>`; walk `e/from/` to stage the edges SMT; walk `j/<seq>` to replay the journal MMR. `vec/*` is intentionally NOT rebuilt (re-embedding lives behind the `Embedder` boundary).
+
+Phase 11.5 extends replay to re-apply `BumpForAccess` / `BumpForCitation` / `DecrementCitation` from `KindFind` and `KindAttest` journal entries. Phase 12 extends it to re-apply `KindLearnWeights` entries.
+
+Verification: `RebuildResult.PreOverallRoot == RebuildResult.PostOverallRoot`. Run on every PR by the `replay-invariant` CI job.
+
+## Rate limiting (Phase 14)
+
+Token-bucket DoS guards on:
+1. `logScopeViolation` journal writes (R5 DoS surface: misbehaving sub-agent spams violations to churn OverallRoot).
+2. `cortex.Attest` entries (R3b DoS surface).
+
+Always non-nil after `New`; never persisted (runtime policy state, not memory data).
 
 ## Load-bearing invariants
 
 These are enforced in code and must never be relaxed without a schema bump:
 
 - Byte-sort == numeric-sort (BE uint64 keys).
-- One Pebble DB per actor.
-- Journal `seq` is monotonic and gap-free.
+- One Pebble DB per actor, isolated on disk.
+- Journal `seq` is monotonic, gap-free, persists across reopen.
 - Every store mutation journals (`ErrBatchNoJournal` enforces it).
 - Atomic batch: journal + head + version + idx/* + salience commit-or-abort together.
-- `#latest` is rejected at URI parse (D13).
+- Canonical CBOR for journal entries (RFC 8949 deterministic).
+- Domain-separated leaf hash (`matrix.cortex.journal.v1`).
+- Domain-separated memory hash (`matrix.cortex.memory.v1` + Type byte).
+- `#latest` is rejected at URI parse time (D13).
 - Tombstoned blocks `Update`; old versions stay resolvable (audit trail).
-- §13.4: drop derived, walk the journal, expect a byte-identical `OverallRoot`.
+- `Find` rejects unbounded and too-broad queries.
+- `Find` ranks by salience-desc by default.
+- Auto-rendered forms are deterministic (same inputs, same bytes).
+- Skill-supplied oversize forms hard-rejected with `ErrFormTooLong`.
+- BudgetTokens trim drops lowest-salience first; always retains at least 1.
+- Phase 13.4: drop derived, walk the journal, expect a byte-identical `OverallRoot`.
 
 <Columns cols={2}>
-  <Card title="Determinism & replay" icon="shield-halved" href="/developer/determinism-replay">
-    How the replay invariant is verified.
-  </Card>
   <Card title="Neo runtime" icon="comments" href="/developer/neo">
     How the conversational agent pages cortex memory.
+  </Card>
+  <Card title="Executor" icon="gears" href="/developer/executor">
+    How the plan walker journals cortex Events and runs Attest.
   </Card>
 </Columns>

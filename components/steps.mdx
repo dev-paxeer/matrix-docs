@@ -1,23 +1,23 @@
 ---
 title: Steps
-description: "Break multi-step processes into numbered instructions with Steps and Step components. Each step gets a title and supports rich content."
+description: "Break multi-step processes into numbered instructions with Steps and Step components. Each step gets a title and supports rich Markdown content."
 ---
 
-Use Steps for ordered instructions:
+Use `Steps` for ordered instructions that the reader follows in sequence.
 
 <Steps>
   <Step title="Install the CLI">
     ```bash
-    npm install -g jamdesk
+    npm install -g matrix-cli
     ```
   </Step>
   <Step title="Initialize your project">
     ```bash
-    jamdesk init
+    matrix init my-project
     ```
   </Step>
   <Step title="Start writing">
-    Open your project and create `.mdx` files. Each file becomes a page in your docs.
+    Create `.mdx` files in your project. Each file becomes a page in your docs.
   </Step>
 </Steps>
 
@@ -31,9 +31,18 @@ Use Steps for ordered instructions:
   <Step title="Second step">
     Next instruction.
   </Step>
+  <Step title="Third step">
+    Final instruction.
+  </Step>
 </Steps>
 ```
 
+Each `Step` requires a `title` prop. The content inside supports full Markdown: code blocks, lists, callouts, images, and links.
+
+## When to use Steps
+
+Use `Steps` when the reader must do the work in order. If the reader picks one path from several alternatives, use [Tabs](/components/tabs-and-accordions) instead. If most readers will skip the content, use an [AccordionGroup](/components/tabs-and-accordions).
+
 <Tip>
-Steps work well for setup guides, tutorials, and getting-started flows.
+Steps work well for setup guides, tutorials, getting-started flows, and any process with a defined sequence.
 </Tip>

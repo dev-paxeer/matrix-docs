@@ -1,17 +1,17 @@
 ---
 title: Agent Manifests
-description: "The JSON-on-disk agent manifest format — schema_version, agent DID, allowed_side_effects, the servers array with transport/command/args/env/package_digest/version/tools, and the locked design rules."
+description: "The JSON agent manifest format: schema_version, agent DID, allowed_side_effects, the servers array with transport, command, args, env, package_digest, version, and tools."
 ---
 
-An **agent manifest** is a JSON-on-disk description of what tools a Matrix agent has access to. It is loaded by `executor/tool` at boot; the canonical Go types live in `executor/tool/manifest.go` (`AgentManifest`, `ServerEntry`, `ToolEntry`, `NativeToolEntry`).
+An **agent manifest** is a JSON file that describes what tools a Matrix agent has access to. The executor loads it at boot, spawns each declared MCP server, and verifies that the server's advertised tools match the manifest exactly. The canonical Go types live in `executor/tool/manifest.go`.
 
-## Files
+## Manifest files
 
 | File | Purpose |
 | --- | --- |
-| `agents/default.json` | The per-user baseline agent for v1. Starting point for fork-and-customize. |
-| `agents/neo.json` | Neo's conversational-agent manifest. |
-| `agents/forge.json` | Forge agent manifest. |
+| `agents/default.json` | The per-user baseline agent. Starting point for fork-and-customize. |
+| `agents/neo.json` | Neo's conversational-agent manifest with the full Paxeer chain surface, embedded-wallet writes, media generation, browser automation, and more. |
+| `agents/mcp-server-templates.json` | A catalog of ready-to-copy MCP server definitions for popular integrations. |
 
 ## Schema
 
@@ -19,7 +19,7 @@ An **agent manifest** is a JSON-on-disk description of what tools a Matrix agent
 {
   "schema_version": 1,
   "agent": "matrix://agent/default",
-  "description": "…",
+  "description": "...",
   "allowed_side_effects": ["read", "write", "network", "shell"],
   "servers": [
     {
@@ -28,45 +28,82 @@ An **agent manifest** is a JSON-on-disk description of what tools a Matrix agent
       "command": "npx",
       "args": ["-y", "@modelcontextprotocol/server-filesystem", "/workspace"],
       "env": [],
-      "package_digest": "sha256:0000…",
+      "package_digest": "sha256:0000...",
       "version": "2026.1.14",
       "tools": [
-        {"name": "read_text_file", "description": "Read the contents of a text file", "side_effect_class": "read"},
-        {"name": "write_file", "description": "Write content to a file", "side_effect_class": "write"}
+        {
+          "name": "read_text_file",
+          "description": "Read the contents of a text file",
+          "side_effect_class": "read"
+        },
+        {
+          "name": "write_file",
+          "description": "Write content to a file",
+          "side_effect_class": "write"
+        }
       ]
     }
-  ]
+  ],
+  "native_tools": []
 }
 ```
 
-### Fields
+## Field reference
 
 | Field | Meaning |
 | --- | --- |
 | `schema_version` | Manifest schema version (currently `1`). |
 | `agent` | The agent's `matrix://agent/<name>` DID. |
-| `allowed_side_effects` | The side-effect classes this agent may perform (`read`, `write`, `network`, `shell`). |
-| `servers[].alias` | Short name used in tool URIs (`matrix://tool/mcp/<alias>/…`). |
+| `description` | Human-readable summary of the agent's role and scope. |
+| `allowed_side_effects` | The side-effect classes this agent may perform: `read`, `write`, `network`, `shell`. |
+| `servers[].alias` | Short name used in tool URIs (`matrix://tool/mcp/<alias>/...`). |
 | `servers[].transport` | `stdio` or `http`. |
 | `servers[].command` / `args` | How to spawn a `stdio` server. |
-| `servers[].env` / `headers` | Credential refs (`$env:NAME`). |
-| `servers[].version` | Server version (forms the tool URI pin). |
+| `servers[].env` | Credential refs (`$env:NAME`). |
+| `servers[].headers` | HTTP headers for `http` servers (also uses `$env:NAME` refs). |
+| `servers[].version` | Server version string, forms the tool URI pin. |
 | `servers[].package_digest` | sha256 of the published package (`sha256:<64-hex>`). |
-| `servers[].tools[]` | The **exhaustive** list of tools the server advertises, each with a `side_effect_class`. |
+| `servers[].tools[]` | The **exhaustive** list of tools the server advertises. |
+| `servers[].tools[].name` | Tool identifier, must match what the server reports. |
+| `servers[].tools[].description` | Human-readable tool summary. |
+| `servers[].tools[].side_effect_class` | `read`, `write`, `network`, or `shell`. |
+| `servers[].tools[].timeout_ms` | Optional per-tool timeout. |
+| `native_tools[]` | Reserved slot for chain-level tools that bypass MCP (v1.1+). |
+
+## The exhaustive-tools rule
+
+The `tools` array in each server entry must list **every** tool the server advertises, no more, no less. At boot, the manager spawns the server, calls `tools/list`, and compares the result against the manifest. Any mismatch (a tool the server advertises but the manifest omits, or a tool the manifest declares but the server does not provide) causes a fatal boot error.
+
+This bijection check prevents two failure modes:
+- An agent calling a tool the manifest did not authorize.
+- A stale manifest referencing tools that no longer exist on the server.
+
+## Side-effect classes
+
+Every tool declares exactly one `side_effect_class`:
+
+| Class | Meaning |
+| --- | --- |
+| `read` | Pure reads with no external side effects (file reads, directory listings, status checks). |
+| `write` | Mutating operations (file writes, commits, deployments). |
+| `network` | Outbound network calls (HTTP fetches, API requests, chain queries). |
+| `shell` | Arbitrary code execution (shell commands, browser evaluate). |
+
+A tool call only executes if its class appears in the manifest's `allowed_side_effects`. An agent that only allows `read` and `network` will refuse any `shell` or `write` tool, even if the server provides it.
 
 ## Locked design rules
 
-| # | Rule |
+| Rule | Description |
 | --- | --- |
-| Q15 | Transports = `stdio` + `http` (streamable HTTP); SSE-only deferred. |
-| Q17 | Tool URI scheme: `matrix://tool/mcp/<server-alias>/<tool-name>@<version>`. |
-| Q18 | Credentials via `$env:NAME` refs in `env`/`headers`; never journaled. |
-| Q19 | `native_tools` is the placeholder slot for chain tools (v1.1). |
-| Q21 | `tools` MUST exhaustively enumerate what the server advertises; the manager rejects drift at boot. |
-| Q22 | `package_digest` MUST be the sha256 of the published package. |
+| Transports | `stdio` and `http` (streamable HTTP) only. |
+| Tool URI | `matrix://tool/mcp/<server-alias>/<tool-name>@<version>`. |
+| Credentials | Via `$env:NAME` refs in `env` or `headers`; never literal values. |
+| Bijection | `tools[]` must exhaustively enumerate what the server advertises. |
+| Package digest | `package_digest` must be the sha256 of the published package. |
+| Native tools | `native_tools` is the placeholder slot for chain tools. |
 
 <Warning>
-The placeholder digests in `default.json` are zero-filled (`sha256:0000…`) for bootstrap testing only. Before any production or chain-anchoring deployment, install the pinned package, compute its real sha256, and replace the placeholder.
+The placeholder digests in `default.json` are zero-filled (`sha256:0000...`) for bootstrap testing only. Before any production deployment, install the pinned package, compute its real sha256, and replace the placeholder.
 </Warning>
 
 <Card title="Verify a manifest" icon="terminal" href="/api-reference/cli">

@@ -1,6 +1,6 @@
 ---
 title: Deployment
-description: "How Matrix runs in production — the per-user daemon image, Fly Machine provisioning via the router, the shared-services box, and the browser/chronos/deus service images."
+description: "How Matrix runs in production: the per-user daemon image, Fly Machine provisioning via the router, the shared-services box, and the browser/chronos/deus service images."
 ---
 
 Matrix runs as one daemon per user, provisioned on demand and fronted by a single public router.
@@ -8,58 +8,74 @@ Matrix runs as one daemon per user, provisioned on demand and fronted by a singl
 ## Production topology
 
 ```text
-Supabase Auth ──JWT──▶ matrix-router (:443 public)
-                          │  validate → wake → reverse-proxy
-                          ▼
+Supabase Auth --JWT--> matrix-router (:443 public)
+                          |  validate -> wake -> reverse-proxy
+                          v
                    per-user Fly Machine  (auto-suspend when idle)
-                   └─ /data volume (cortex + workspace)
-                          │  WireGuard mesh
-                          ▼
-              shared box: MinIO (snapshots) + Postgres (user→machine) + router
+                   +-- /data volume (cortex + workspace)
+                          |  WireGuard mesh
+                          v
+              shared box: MinIO (snapshots) + Postgres (user->machine) + router
 ```
 
 - **Compute:** one Fly Machine per user, auto-suspended when idle, with a per-Machine Volume mounted at `/data`.
-- **State:** a dedicated box hosts MinIO (per-user state snapshots) + Postgres (user → machine-id mapping) + `matrix-router`.
+- **State:** a dedicated box hosts MinIO (per-user state snapshots) + Postgres (user to machine-id mapping) + `matrix-router`.
 - **Network:** WireGuard mesh between Machines and the box; only the router's `:443` is public.
-- **Auth:** Supabase Auth → JWT → router validates → wakes the user's Machine via the Fly Machines API → reverse-proxies.
+- **Auth:** Supabase Auth, then JWT, then the router validates, wakes the user's Machine via the Fly Machines API, and reverse-proxies.
 
 ## The daemon image (`deploy/daemon/`)
 
-A multi-stage build (`golang:1.22-bookworm` builder → `debian:bookworm-slim`) that compiles the Go binaries, installs Node/Python/uv, pre-caches the MCP servers, and bakes in the skill corpus + agent manifests.
+A multi-stage build (`golang:1.22-bookworm` builder, then `debian:bookworm-slim`) that compiles the Go binaries, installs Node/Python/uv, pre-caches the MCP servers, and bakes in the skill corpus + agent manifests.
 
 | File | Role |
 | --- | --- |
-| `Dockerfile` | Multi-stage daemon image. |
-| `entrypoint.sh` | Idempotent `/data` layout, workspace init, MinIO pull, starts Neo dual-process or standalone daemon. |
-| `fly.toml.tmpl` | Per-user Fly Machine template rendered by the router (`auto_stop_machines=suspend`, volume mount, health checks). |
+| `Dockerfile` | Multi-stage daemon image |
+| `entrypoint.sh` | Idempotent `/data` layout, workspace init, MinIO pull, starts Neo dual-process or standalone daemon |
+| `fly.toml.tmpl` | Per-user Fly Machine template rendered by the router (`auto_stop_machines=suspend`, volume mount, health checks) |
 
-<Warning>
-Images install everything they need at **build time**. No runtime `apt-get install` / `npm install` — that's a cold-start killer. `entrypoint.sh` must be idempotent: run twice, get the same state.
-</Warning>
+Images install everything they need at **build time**. No runtime `apt-get install` or `npm install` - that's a cold-start killer. `entrypoint.sh` must be idempotent: run twice, get the same state.
+
+### Agent manifests in the daemon
+
+The daemon image bakes in the agent manifests from `agents/`. At boot, the executor loads the appropriate manifest (default, neo, cody, forge, or paxeer) and spawns the declared MCP servers as persistent subprocesses. The `MATRIX_DAEMON_TOKEN` authenticates requests to the daemon API. The `MATRIX_EXEC_STATE_DIR` environment variable isolates each agent's service registry (e.g., `/data/neo/services` for Neo, `/data/cody/services` for Cody).
+
+### MCP server lifecycle
+
+Per design decisions Q16 and Q4:
+
+- MCP servers are persistent processes spawned on agent boot.
+- Health-pinged and auto-reconnected.
+- Graceful drain on shutdown.
+- Off-chain tools dispatch through Anthropic MCP (stdio + streamable HTTP transports).
+- Server credentials resolved from `$env:NAME` refs at spawn time; never journaled.
 
 ## Shared-service images
 
 | Path | Service |
 | --- | --- |
-| `deploy/browser/` | Shared private Playwright/browser runtime (version-pinned, session-isolated, optional bearer auth). |
-| `deploy/chronos/` | `chronosd` systemd unit + idempotent installer + optional nginx snippet. |
-| `deploy/deus/` | Deus control-plane container (binaries + migrations + configs) with a box-deploy guide and env template. |
+| `deploy/browser/` | Shared private Playwright/browser runtime (version-pinned, session-isolated, optional bearer auth) |
+| `deploy/chronos/` | `chronosd` systemd unit + idempotent installer + optional nginx snippet |
+| `deploy/deus/` | Deus control-plane container (binaries + migrations + configs) with a box-deploy guide and env template |
 
 ## Configure
 
 ```bash
 cp .env.example .env
-# FIREWORKS_API_KEY / TOGETHER_API_KEY — LLM providers
-# MATRIX_DAEMON_TOKEN — daemon auth
+# FIREWORKS_API_KEY / TOGETHER_API_KEY, LLM providers
+# MATRIX_DAEMON_TOKEN, daemon auth
+# PAXEER_WALLET_TOKEN or PAXEER_WALLET_EMAIL + PAXEER_WALLET_PASSWORD + PAXEER_SUPABASE_ANON_KEY
 ```
 
-`.env` is gitignored; `.env.example` documents every variable Matrix reads.
+`.env` is gitignored; `.env.example` documents every variable Matrix reads. Literal credentials must never appear in agent manifests; use `$env:` refs instead.
 
-<Columns cols={2}>
-  <Card title="Daemon API" icon="plug" href="/api-reference/daemon">
-    The routes the deployed daemon serves.
-  </Card>
-  <Card title="Router API" icon="route" href="/api-reference/router">
-    Provisioning and wake-then-proxy endpoints.
-  </Card>
-</Columns>
+## Executor deployment considerations
+
+The executor module (`executor/`) runs inside the daemon image and manages:
+
+- **Lifecycle state machine** (`executor/lifecycle/`): session states and transitions.
+- **Tool dispatch** (`executor/tool/`): registry of native and MCP tools, manifest loading.
+- **MCP client** (`executor/mcp/`): JSON-RPC 2.0 codec, stdio and streamable HTTP transports, per-agent server pool.
+- **Plan walker** (`executor/runtime/`): depth-first + parallel + gate traversal of the plan tree.
+- **Materiality classification** (`executor/materiality/`): D9 classifier that halts execution on material plan modifications until re-accept.
+
+The executor model default is `DefaultExecutorModel()` from `MCL/llm/model.go` (DeepSeek-V4-Pro on Fireworks). Streaming progress emits JSONL per-event to stdout/stderr and cortex Event memory per step.

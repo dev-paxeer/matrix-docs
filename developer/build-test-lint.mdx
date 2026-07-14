@@ -1,26 +1,18 @@
 ---
 title: Build, Test & Lint
-description: "The root Makefile workflow — building the Go modules, running race tests, the local CI gate, and golangci-lint setup."
+description: "The root Makefile workflow, building the Go modules, running race tests, the local CI gate, and golangci-lint setup."
 ---
 
-The root `Makefile` drives every sibling Go module. Each module is independently `go build`/`go test`able with its own `go.mod`.
+The root `Makefile` drives every sibling Go module. Each module is independently `go build` / `go test`able with its own `go.mod`.
 
 ## Toolchain
 
-<Columns cols={2}>
-  <Card title="Go 1.22+" icon="golang">
-    Every `go.mod` pins `go 1.21`; 1.22+ is recommended for local dev.
-  </Card>
-  <Card title="GNU make 4.x" icon="hammer">
-    Drives build, install, test, vet, and the CI gate.
-  </Card>
-  <Card title="Node 20+, Python 3.11+, uv" icon="boxes-stacked">
-    Needed for the MCP-server-driven flows.
-  </Card>
-  <Card title="Docker 24+ (buildx)" icon="docker">
-    Needed only to build the daemon image.
-  </Card>
-</Columns>
+| Tool | Purpose |
+| --- | --- |
+| Go 1.22+ | Every `go.mod` pins `go 1.21`; 1.22+ recommended for local dev |
+| GNU make 4.x | Drives build, install, test, vet, and the CI gate |
+| Node 20+, Python 3.11+, uv | Needed for the MCP-server-driven flows |
+| Docker 24+ (buildx) | Needed only to build the daemon image |
 
 ## Common targets
 
@@ -33,9 +25,7 @@ make ci              # gofmt-check + vet + tests (mirrors GitHub Actions)
 make version         # print Go + golangci-lint + Docker versions
 ```
 
-<Tip>
 A clean `make ci` is the bar for opening a PR.
-</Tip>
 
 ## Linting
 
@@ -49,11 +39,11 @@ The lint config (`.golangci.yml`) narrows static analysis to bugs and correctnes
 ## Test discipline
 
 - **Don't weaken existing tests.** Removing or skipping a test requires an explicit reason in the PR description.
-- **Add tests for new behavior** — at minimum a happy path plus one error path.
+- **Add tests for new behavior** - at minimum a happy path plus one error path.
 - **Cortex mutation paths** need a `Rebuild`-after-mutation test (see `cortex/rebuild_test.go`).
 - **MCL lexer/parser/validator** changes need token + parser tests, and every new validator rule needs a green-path and red-path test.
 - **Skill corpus:** `./bin/mcl-validate skills/<slug>/SKILL.mtx`; the `mtx-corpus` CI job validates every `SKILL.mtx` on each PR.
 
-<Card title="Contributing" icon="code-pull-request" href="/developer/contributing">
-  Branching, commit conventions, and the PR process.
-</Card>
+## MCP tooling dependencies
+
+The executor module depends on MCP servers that require Node 20+ and Python 3.11+ with `uv`. The default agent manifest (`agents/default.json`) bundles servers for filesystem, fetch, web-search, browser, git, and exec, each spawned via `npx` or `uvx` at agent boot time. Build verification should confirm these server packages resolve correctly.

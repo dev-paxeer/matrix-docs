@@ -1,46 +1,192 @@
 ---
 title: Tachyon API
-description: "The agent-native Solidity/EVM engine — compile, test, simulate, deploy, and call contracts; manage chains and artifacts; plus a JSON-RPC endpoint and MCP surface."
+description: "The agent-native Solidity/EVM engine: compile, test, simulate, deploy, and call contracts; manage chains and artifacts; exposed as MCP tools."
 ---
 
-**Tachyon** is the agent-native Solidity/EVM engine. It exposes its compile/test/simulate/deploy workflow as API, RPC, and MCP surfaces rather than a human-first terminal flow.
+**Tachyon** is the agent-native Solidity/EVM smart contract engine. Rather than a human-first terminal flow, it exposes its compile/test/simulate/deploy workflow as MCP tools callable by Matrix agents. Tachyon runs as a stdio MCP server (`tools/tachyon/tachyon.mjs`).
 
-## Routes
+## MCP tools
 
-| Method | Path | Purpose |
+Tachyon exposes nine tools:
+
+| Tool | Read/Write | Purpose |
 | --- | --- | --- |
-| GET | `/healthz` | Liveness. |
-| GET | `/` | Service root / info. |
-| POST | `/rpc` | JSON-RPC endpoint (MCP-style tool calls). |
-| POST | `/v1/compile` | Compile Solidity sources. |
-| POST | `/v1/test` | Run the test suite. |
-| POST | `/v1/simulate` | Simulate a transaction. |
-| POST | `/v1/deploy` | Deploy a contract. |
-| POST | `/v1/call` | Call a contract method. |
-| GET | `/v1/chains` | List configured chains. |
-| POST | `/v1/chains` | Add a chain. |
-| POST | `/v1/chains/use` | Select the active chain. |
-| GET | `/v1/artifacts/{name}` | Fetch a build artifact. |
-| GET | `/v1/registry/deployments` | List recorded deployments. |
+| `tachyon_compile` | Read | Compile Solidity with forge; return ABI + bytecode + project_id |
+| `tachyon_test` | Read | Run a Forge test suite; return structured per-case results (pass/fail/gas) |
+| `tachyon_simulate` | Read | Dry-run an `eth_call` against a chain without broadcasting |
+| `tachyon_deploy` | Write | Deploy a compiled contract on-chain (signs + broadcasts via embedded wallet) |
+| `tachyon_call` | Read or Write | Invoke a contract method; `simulate_only=true` for reads, `false` for writes |
+| `tachyon_chain_list` | Read | List configured chain RPC profiles (id, name, chain_id, explorer) |
+| `tachyon_chain_register` | Write | Register or update a custom chain RPC profile |
+| `tachyon_artifact_get` | Read | Fetch a cached compile artifact by contract name and project_id |
+| `tachyon_registry_lookup` | Read | Resolve a prior deployment by idempotency_key + chain_id |
 
 ## Compile
 
+`POST /v1/compile` (HTTP) or `tachyon_compile` (MCP)
+
 <ParamField body="sources" type="object" required>
-  Map of filename → Solidity source.
+  Map of workdir-relative path to Solidity source. Contracts under `src/`, tests under `test/`. OpenZeppelin and forge-std resolve automatically against the shared engine's baked corpus.
 </ParamField>
+<ParamField body="targets" type="array">
+  Optional contract names to return artifacts for; empty returns all.
+</ParamField>
+<ParamField body="project_id" type="string">
+  Override the derived project ID (normally a deterministic sources hash).
+</ParamField>
+<ParamField body="optimize" type="boolean">
+  Enable the solc optimizer.
+</ParamField>
+<ParamField body="via_ir" type="boolean">
+  Compile through the Yul IR pipeline.
+</ParamField>
+
+Returns `artifacts` (ABI + bytecode per contract), a stable `project_id`, and any compiler diagnostics.
 
 <RequestExample>
 ```bash cURL
 curl -X POST https://tachyon.example/v1/compile \
-  -H "Authorization: Bearer $TACHYON_TOKEN" \
+  -H "Authorization: Bearer ***" \
   -H "Content-Type: application/json" \
-  -d '{"sources": {"Counter.sol": "// SPDX-License-Identifier: MIT\npragma solidity ^0.8.0;\ncontract Counter { uint256 public n; }"}}'
+  -d '{
+    "sources": {
+      "src/Counter.sol": "// SPDX-License-Identifier: MIT\npragma solidity ^0.8.0;\ncontract Counter { uint256 public n; function inc() external { n++; } }"
+    }
+  }'
 ```
 </RequestExample>
 
-<ResponseField name="artifacts" type="object">
-  Compiled ABI + bytecode per contract; fetch by name at `/v1/artifacts/{name}`.
-</ResponseField>
+## Test
+
+`tachyon_test` (MCP)
+
+<ParamField body="sources" type="object" required>
+  Map of workdir-relative path to content. Tests under `test/`, contracts under `src/`.
+</ParamField>
+<ParamField body="match_path" type="string">
+  `forge --match-path` glob (e.g. `test/Token.t.sol`).
+</ParamField>
+<ParamField body="match_contract" type="string">
+  `forge --match-contract` filter.
+</ParamField>
+<ParamField body="filter" type="string">
+  `forge --match-test` test-name filter.
+</ParamField>
+
+Returns structured per-case results with pass/fail status and gas usage.
+
+## Simulate
+
+`tachyon_simulate` (MCP)
+
+<ParamField body="chain_id" type="string" required>
+  Chain profile ID or numeric EVM chain ID. Paxeer is `"paxeer-mainnet"` or `"125"`.
+</ParamField>
+<ParamField body="to" type="string" required>
+  Target contract address (0x...).
+</ParamField>
+<ParamField body="data" type="string">
+  Pre-encoded calldata hex (0x...).
+</ParamField>
+<ParamField body="from" type="string">
+  Caller address (0x...).
+</ParamField>
+<ParamField body="value" type="string">
+  Wei value as decimal or 0x-hex.
+</ParamField>
+<ParamField body="block" type="string">
+  Block tag/number (default `latest`).
+</ParamField>
+
+Dry-run only. Returns the raw return data and revert reason if it reverts.
+
+## Deploy
+
+`tachyon_deploy` (MCP)
+
+<ParamField body="idempotency_key" type="string" required>
+  Caller-chosen key; repeat to dedupe a redeploy. A prior deploy with the same key + chain returns the existing address.
+</ParamField>
+<ParamField body="chain_id" type="string" required>
+  Target chain profile ID or numeric EVM chain ID.
+</ParamField>
+<ParamField body="contract" type="string" required>
+  Contract name to deploy (must exist in the registry for the project_id).
+</ParamField>
+<ParamField body="project_id" type="string">
+  Project ID from `tachyon_compile`.
+</ParamField>
+<ParamField body="constructor_args" type="array">
+  Constructor arguments, in ABI order.
+</ParamField>
+<ParamField body="spend_cap_wei" type="string">
+  Optional per-tx spend cap (wei).
+</ParamField>
+
+Signs and broadcasts via the caller's embedded wallet. The daemon's agent identity is forwarded automatically; custody policy is enforced wallet-side.
+
+## Call
+
+`tachyon_call` (MCP)
+
+<ParamField body="to" type="string" required>
+  Target contract address (0x...).
+</ParamField>
+<ParamField body="method" type="string">
+  Function name to ABI-encode (with args). Omit to use pre-encoded data.
+</ParamField>
+<ParamField body="args" type="array">
+  Arguments for method, in ABI order.
+</ParamField>
+<ParamField body="abi" type="object">
+  Inline ABI JSON to encode against (else resolved from contract + project_id).
+</ParamField>
+<ParamField body="contract" type="string">
+  Contract name to resolve the ABI from the registry.
+</ParamField>
+<ParamField body="project_id" type="string">
+  Project ID owning the artifact for ABI resolution.
+</ParamField>
+<ParamField body="data" type="string">
+  Pre-encoded calldata hex when method is omitted.
+</ParamField>
+<ParamField body="simulate_only" type="boolean">
+  `true` = `eth_call` read (no broadcast, no wallet); `false` = broadcast.
+</ParamField>
+<ParamField body="chain_id" type="string">
+  Target chain profile ID or numeric EVM chain ID.
+</ParamField>
+<ParamField body="spend_cap_wei" type="string">
+  Optional per-tx spend cap (wei) for the broadcast.
+</ParamField>
+
+## Chain management
+
+`tachyon_chain_list` returns all configured chain RPC profiles (id, name, chain_id, explorer) and which is active.
+
+`tachyon_chain_register` registers or updates a custom chain profile:
+
+<ParamField body="id" type="string" required>
+  Short profile ID (e.g. `"my-chain"`). Paxeer chain 125 is preconfigured as `"paxeer-mainnet"`.
+</ParamField>
+<ParamField body="name" type="string" required>
+  Human-readable name.
+</ParamField>
+<ParamField body="rpc_url" type="string" required>
+  JSON-RPC URL.
+</ParamField>
+<ParamField body="chain_id" type="number" required>
+  EVM chain ID (uint).
+</ParamField>
+<ParamField body="explorer" type="string">
+  Block explorer base URL.
+</ParamField>
+
+## Artifact registry
+
+`tachyon_artifact_get` fetches a cached compile artifact (ABI + bytecode) by contract name and project_id.
+
+`tachyon_registry_lookup` resolves a prior deployment by idempotency_key + chain_id (returns address, tx hash, confirmation state, or `found=false`).
 
 <Card title="MCP surface" icon="plug" href="/mcp/tool-servers">
   How Tachyon is exposed to agents as MCP tools.

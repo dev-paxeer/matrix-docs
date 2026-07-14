@@ -1,64 +1,142 @@
 ---
 title: Deus API
-description: "The agent-service marketplace — discovery and catalog, the service registry lifecycle, quoting and metered invoke, payment channels, vouchers, receipts, and developer dashboards."
+description: "The agent-service marketplace and registry: discovery, catalog, service lifecycle, quoting and metered invoke, payment channels, vouchers, receipts, and developer dashboards."
 ---
 
-**Deus** is the agent-service marketplace and registry control plane. It has three auth contexts: public discovery, developer-authenticated registry management (`X-Developer-Token`), and caller-authenticated invoke.
+**Deus** is the agent-service marketplace and registry control plane. Developers list APIs and AI services; anyone (especially AI agents) discovers and calls them, paying only for what they use. Developers keep 100%; Paxeer hosts services for free and monetizes on-chain activity.
 
-## Discovery
+Base URL: `https://deus.paxeer.app`
+
+## Auth model
+
+| Audience | Mechanism |
+| --- | --- |
+| Developer (console) | Supabase JWT or wallet signature (EIP-191/712) over a challenge |
+| Developer (CI/programmatic) | Wallet-signed request: `Authorization: Wallet ***` over canonical request hash |
+| Caller / agent | `Authorization: Bearer ***` + `X-Caller-DID` |
+| Internal | mTLS / shared bearer on the private network only |
+
+The caller bearer only identifies; it never authorizes spend. Payment authority is the payer's own ed25519 signature over the canonical LayerX intent preimage, carried in-band via `X-LayerX-Payment`.
+
+## Conventions
+
+- **Errors** use a uniform envelope:
+  ```json
+  {"error": "quote_expired", "message": "quote expired", "detail": {"quote_id": "uuid"}}
+  ```
+  Codes: `invalid_request`, `unauthorized`, `forbidden`, `not_found`, `conflict`, `payment_required`, `payment_unavailable`, `quote_expired`, `service_unavailable`, `rate_limited`, `internal_error`.
+- **Idempotency**: write/invoke endpoints accept `Idempotency-Key` header; replays return the original result.
+- **Pagination**: `?limit=&cursor=`; responses include `next_cursor`.
+- **All money** is a decimal string, never a number. Pay-path amounts are USDX at 6dp.
+
+## Discovery endpoints (public)
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| GET | `/v1/catalog` | Browse the published service catalog. |
-| GET | `/v1/discover` | Discover services (query params). |
-| POST | `/v1/discover` | Discover services (structured body). |
+| GET | `/v1/catalog` | Browseable paginated catalog |
+| GET | `/v1/discover` | Structured + semantic search (query params) |
+| POST | `/v1/discover` | Same, richer body (plain-language + filters) |
+| GET | `/v1/services/{id}` | Get a service listing (public, includes manifest) |
 
-## Registry (developer-authenticated)
+### `POST /v1/discover` (plain-language search)
+
+```json
+{
+  "query": "a weather API with high uptime under 0.001 PAX per call",
+  "filters": {
+    "kind": "data",
+    "max_price_wei": "1000000000000000",
+    "min_quality": "900000000000000000",
+    "min_uptime_bps": 9900,
+    "confidential": false
+  },
+  "limit": 10
+}
+```
+
+Returns `results[]` with `id`, `slug`, `display_name`, `summary`, `kind`, `quality_score`, `uptime_bps`, `score` (blended ranking), `operations[]`, and `next_cursor`.
+
+## Registry endpoints (developer-authenticated)
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| GET | `/v1/services/{id}` | Get a service (public). |
-| POST | `/v1/services` | Create a service. |
-| POST | `/v1/services/{id}/publish` | Publish. |
-| POST | `/v1/services/{id}/pause` · `/delist` | Change status. |
-| POST | `/v1/services/{id}/artifacts` | Upload an artifact. |
-| POST | `/v1/services/{id}/deploy` · `/redeploy` | Deploy hosted execution. |
-| GET | `/v1/services/{id}/deployments` | List deployments. |
-| GET | `/v1/services/{id}/deployments/{deployment_id}` | Get a deployment. |
-| GET | `/v1/services/{id}/logs` · `/analytics` | Observability. |
-| POST | `/v1/services/{id}/payout` | Trigger a payout. |
+| POST | `/v1/services` | Create a listing (draft); body contains the manifest |
+| GET | `/v1/services/{id}` | Get a listing (public) |
+| PATCH | `/v1/services/{id}` | Update manifest/pricing (owner) |
+| POST | `/v1/services/{id}/publish` | Validate + register on-chain, set status=active |
+| POST | `/v1/services/{id}/pause` | Set status=paused |
+| POST | `/v1/services/{id}/delist` | Set status=delisted |
+| GET | `/v1/services/{id}/analytics` | Invocations, revenue, quality, latency (owner) |
+| POST | `/v1/services/{id}/artifacts` | Multipart upload of code/container (hosted mode) |
+| POST | `/v1/services/{id}/deploy` | Build + deploy |
+| POST | `/v1/services/{id}/redeploy` | Rebuild + redeploy |
+| GET | `/v1/services/{id}/deployments` | Deployment status (build/deploy/running) |
+| GET | `/v1/services/{id}/logs` | Tail runner logs (owner) |
+| POST | `/v1/services/{id}/payout` | Trigger a developer payout |
 
-Developer auth: `POST /v1/developers/nonce` → sign → `POST /v1/developers/auth`. Pass the resulting `X-Developer-Token` on registry calls.
+Developer auth: `POST /v1/developers/nonce` then sign then `POST /v1/developers/auth`. Pass the resulting `X-Developer-Token` on registry calls.
 
-## Invoke, channels & receipts (caller-authenticated)
+## Invocation endpoints (caller-authenticated) -- the hero path
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| POST | `/v1/quote/{id}` | Quote a call's cost. |
-| POST | `/v1/invoke/{id}` | Invoke a service (metered; accepts `Idempotency-Key`). |
-| GET | `/v1/invocations/{id}` | Get an invocation. |
-| GET | `/v1/receipts/{id}` | Get an EIP-712 receipt. |
-| POST | `/v1/channels` | Open a payment channel. |
-| POST | `/v1/vouchers/cosign` | Co-sign a payment voucher. |
-| POST | `/v1/streams` · `/v1/streams/{id}` · `/settle` · `/close` | Streaming sessions. |
+| POST | `/v1/quote/{service_id}` | Get a signed price quote for an operation |
+| POST | `/v1/invoke/{service_id}` | Invoke an operation (meter + route + receipt); accepts `Idempotency-Key` |
+| GET | `/v1/invocations/{id}` | Get an invocation status + receipt |
+| GET | `/v1/receipts/{invocation_id}` | Get a signed EIP-712 receipt (+ attestation) |
+
+### Quote
+
+`POST /v1/quote/{service_id}`
+
+```json
+{"operation": "forecast", "estimated_units": "1"}
+```
+
+Returns a signed quote with `quote_id`, `unit_price_usdx`, `max_total_usdx`, `pricing_version`, `expires_at`, and an EIP-712 `domain`/`digest`/`signature`. The quote round-trip is optional: the 402 challenge carries equivalent terms.
+
+### Invoke
+
+`POST /v1/invoke/{service_id}`
+
+```json
+{
+  "operation": "forecast",
+  "args": {"lat": 37.77, "lng": -122.41},
+  "quote_id": "uuid",
+  "idempotency_key": "client-uuid"
+}
+```
+
+Headers: `Authorization: Bearer ***`, `X-Caller-DID: did:matrix:...`, and on the paid retry `X-LayerX-Payment: <base64url payment>`.
+
+## Payment channels, vouchers & streams
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| POST | `/v1/channels` | Open a payment channel |
+| POST | `/v1/vouchers/cosign` | Co-sign a payment voucher |
+| POST | `/v1/streams` | Start a streaming session |
+| POST | `/v1/streams/{id}/settle` | Settle a streaming session |
+| POST | `/v1/streams/{id}/close` | Close a streaming session |
 
 ## Dashboard
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| GET | `/v1/me` | Account identity. |
-| GET | `/v1/me/spend` | Caller spend. |
-| GET | `/v1/me/services` · `/earnings` | Owner-scoped listings + earnings. |
-
-## Invoke a service
+| GET | `/v1/me` | Account identity |
+| GET | `/v1/me/spend` | Caller spend history |
+| GET | `/v1/me/services` | Owner-scoped listings |
+| GET | `/v1/me/earnings` | Owner-scoped earnings |
 
 <RequestExample>
 ```bash cURL
-curl -X POST https://deus.example/v1/invoke/svc_abc123 \
-  -H "Authorization: Bearer $CALLER_TOKEN" \
+curl -X POST https://deus.paxeer.app/v1/invoke/svc_abc123 \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "X-Caller-DID: did:matrix:user:keyfp" \
   -H "Idempotency-Key: 7f3c..." \
   -H "Content-Type: application/json" \
-  -d '{"input": {"prompt": "..."}, "payment": {"rail": "channel"}}'
+  -d '{"operation": "forecast", "args": {"lat": 37.77, "lng": -122.41}}'
 ```
 </RequestExample>
 

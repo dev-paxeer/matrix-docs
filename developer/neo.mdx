@@ -1,62 +1,218 @@
 ---
 title: Neo Runtime
-description: "Neo's recursive tool-calling loop — the transcript-as-state design, two-model architecture, context budget and compaction, the recovery ladder, and how it escalates to MCL."
+description: "Neo's recursive tool-calling loop, swarm sub-agents, Automatrix autonomous execution, capability surface, supervisor pattern, and SSE event streaming."
 ---
 
-**Neo** is the default conversational agent. Package `matrix/neo/internal/agent` implements a recursive LLM tool-calling loop where **the conversation transcript IS the state**: the model emits text + tool-call intents, and the harness is the only effector. This is deliberately *not* the MCL compile→plan→execute machine — MCL is reached only through the `core_execute` tool for rigorous or monetary tasks.
+**Neo** is Matrix's default conversational agent. Package `matrix/neo/internal/agent` implements a recursive LLM tool-calling loop where **the conversation transcript IS the state**: the model emits text + tool-call intents, and the harness is the only effector. This is deliberately not the MCL compile-plan-execute machine. MCL is reached only through the `core_execute` tool for rigorous or monetary tasks.
 
 ## Design decisions
 
 - **The transcript is the state.** No hidden state machine, no plan tree. The model sees the conversation (minus what was compacted) and decides what to do next.
 - **System block is re-derived every turn.** Identity + rules + retrieved memory + budget stat are rebuilt fresh each iteration, so they can never drift.
-- **Two-model architecture.** A main model (conversational, tool-calling) and a cheap model (compaction, validation, write-back). The cheap model falls back to the main model if unavailable.
+- **Two-model architecture.** A main model (conversational, tool-calling) and a cheap model (compaction, validation, write-back). Sub-agents use the main model with extended reasoning OFF to cut latency and token burn.
 - **Context budget with thresholds.** Soft (80%) triggers cooperative compaction at a clean boundary; hard (92%) forces it immediately as a runaway backstop.
 - **No-progress stall detection.** Repeating the same tool-call batch without progress stops the loop after `NoProgressStall` repeats and returns an honest partial.
+- **ErrIncomplete is not a failure.** It means "task not finished, keep going." The supervisor respawns a fresh agent over durable state.
 
 ## The chat loop
 
 <Steps>
   <Step title="Page-fault memory">
-    `faultMemory` / `faultPatterns` / `recallTurns` pull relevant cortex records, proven procedural patterns, and past conversation turns (once per turn; refaulted every 6 steps against the latest narration).
+    `faultMemory` / `faultPatterns` / `recallTurns` pull relevant cortex records, proven procedural patterns, and past conversation turns. Pinned block (identity + inviolable rules + active goal) is injected every turn. Memory is refaulted every 6 steps against the latest narration.
   </Step>
   <Step title="Build system block">
-    `buildSystem` composes: static charter, embedded ground truth (`knowledge.md`), pinned block (DID + inviolable rules + hard constraints + user profile + active goal), consolidated summary, recalled turns, retrieved memory, procedural patterns, and a budget stat.
+    `buildSystem` composes: static charter, embedded ground truth (`knowledge.md`), pinned block, capability surface, consolidated summary, recalled turns, retrieved memory (HNSW vector search or salience-ranked), procedural patterns, and a budget stat.
   </Step>
-  <Step title="Budget check & call">
-    If usage ≥ hard threshold, compact now. Otherwise send the window (system + working transcript + tool schemas) to the main model.
+  <Step title="Budget check and call">
+    If usage >= hard threshold, compact now. Otherwise send the window (system + working transcript + tool schemas) to the main model.
   </Step>
   <Step title="Tool calls or finish">
-    No tool calls → termination check → final answer. Otherwise run each tool call via `dispatchWithRetry`, append results, and loop back.
+    No tool calls -> termination check -> final answer. Otherwise run each tool call via `dispatchWithRetry`, append results, stream `ToolEvent` observations (start/end/stream phases), and loop back.
   </Step>
 </Steps>
 
+## The Agent struct
+
+The `Agent` struct carries three documented lifetimes (MORPHEUS req.2.2):
+
+- **Construction** (set at `New`, then stable): config, model clients, tool manager, pager, reporter, consolidator, recaller, tool observer, audit observer, capability surface, schemas.
+- **Session** (evolves across turns): working transcript, active goal, persona (for sub-agents), self-model (inherited alignment brief).
+- **Turn** (replaced at `Chat` entry): the epistemic mechanisms' state, the Cassandra controller's per-turn state, overflow latch, stall bookkeeping, surfaced-memory sets, failure-class scratch. Constructing the turn IS the per-turn reset.
+
+## Tool events and transparency
+
+Every tool call emits `ToolEvent` observations through a `ToolObserver` callback, enabling the product to SHOW THE WORK:
+
+- **ToolStart** - dispatched, no result yet. The surface paints a live "running" viewport.
+- **ToolEnd** - completed. Result content and error status available.
+- **ToolStream** - mid-flight live-typing fragment for file writes the model is still generating (NEO-WORKBENCH). Fires before ToolStart; carries `StreamPath`, `StreamDelta`, `StreamOffset`.
+
+Each `ToolEvent` carries `ScreenshotURL` for browser viewport auto-capture (BROWSER-FILMSTRIP). Screenshots never enter the model transcript; they ride only the observer event so the surface can render the browsing filmstrip.
+
+## Capability surface
+
+The `CapabilitySurface` is the resolved capability material rendered resident in the byte-stable prefix of the system prompt (epistemic-core req.2). Construction-time state, so the rendered section is byte-identical across a turn's steps. This tells the model what it can and cannot do in this environment.
+
+## Swarm sub-agents
+
+The `spawn_subagents` tool fans tasks out to concurrent sub-agents. Each sub-agent is its own headless agent loop over a fresh, isolated context window with the restricted tool surface (full Natural tools, no money, no recursion).
+
+Key properties:
+
+- **Bounded concurrency.** `MaxConcurrentSubagents` limits parallel execution; excess queue.
+- **Isolation.** Sub-agents cannot spawn their own sub-agents (`swarmActiveKey` context guard prevents fork-bombs).
+- **Per-agent timeout.** `subagentTurnTimeout` (12 min) bounds a single sub-agent's run independent of the parent's budget.
+- **Retry on hard failure.** `subagentMaxAttempts` (2) retries a sub-agent that hard-fails before giving up.
+- **Self-model alignment.** Every sub-agent inherits the SAME structural self-summary + how-I-fail patterns, resolved once for the whole swarm.
+- **Live streaming.** Sub-agent workspace activity is streamed onto the parent conversation's event stream as a live Agent Swarm with per-subagent status events.
+- **Context conservation.** Heavy tool work (reading repos, crawling pages) happens in sub-agent windows; only compact results return to Neo's.
+
+```text
+Parent agent
+  |-- spawn_subagents(task_1, task_2, task_3)
+       |-- sub-agent 1: isolated window, restricted tools, headless
+       |-- sub-agent 2: isolated window, restricted tools, headless
+       |-- sub-agent 3: isolated window, restricted tools, headless
+       |
+       +-- aggregated digest returned to parent
+```
+
+## Automatrix: autonomous execution
+
+Automatrix is Neo's autonomous opportunity execution system. It lets Neo proactively work on tasks without user prompting.
+
+### Lifecycle
+
+1. **Governor** (`AutomatrixGovernor`): per-user opt-in backed by a durable settings store. Enabling creates exactly ONE recurring Chronos alarm. Disabling cancels it. The governor never holds a signing key and performs no on-chain action.
+2. **Wake**: Chronos delivers a recurring wake message. The wake handler reads the governor (live on every wake, so toggles take effect without restart), picks an opportunity from the durable store, and hands it to the runner.
+3. **Runner** (`RunAutomatrixOpportunity`): performs the in-flight status hand-off (scheduled -> in_progress, persisted atomically), resumes into the opportunity's origin conversation for context fidelity, and dispatches a supervised run on the restricted (no-money) tool surface.
+4. **Dispatch**: runs on a background goroutine decoupled from the wake request (context.Background + the normal task wall-clock). The run is durable across restart (Task Durability Rule).
+5. **Settlement**: on genuine completion-gate pass -> mark done + announce out-of-band. On partial/fail -> back to pending with attempts++ (bounded at `automatrixMaxAttempts = 3`; dismissed at ceiling). Non-completed tasks are NEVER announced.
+
+### Key invariants
+
+- Only ONE proactive task runs at a time per user (`automatrixInflight` atomic counter). A fresh wake DEFERs while a run is underway.
+- The per-day counter advances only on a clean START, not on completion.
+- Jitter on reschedule so wakes feel random (req 4.3).
+- No signing key held; no on-chain action performed by the governor.
+- External completion notification (ntfy + optional Apprise fan-out) is best-effort and non-blocking.
+
+## The supervisor pattern
+
+The persistent supervisor wraps the agent loop for task-level execution. It implements the Task Durability Rule: any non-clean exit triggers a respawn with a fresh window over durable state, until the ceiling is hit.
+
+Decision matrix:
+
+| Condition | Action |
+|---|---|
+| Clean completion | Done |
+| User stop | Interrupted (wins over everything) |
+| Model error + budget left | Respawn |
+| ErrIncomplete (stall/budget) | Respawn |
+| Deterministic blocker | Stop (no respawn, no budget consumed) |
+| Wall-clock blown | Ceiling |
+| Respawn budget exhausted | Ceiling |
+
+The `resumePrime` function carries the verbatim objective and a "build on existing work" instruction on every respawn. After several stuck attempts, it adds a decomposition nudge suggesting `spawn_subagents`.
+
 ## Compaction
 
-When the window fills, older working history is swapped into a consolidated active-session summary (`GOAL / DECISIONS / ARTIFACTS / OPEN / LAST_RESULTS / NEXT`). A `validateSummary` pass checks that every high-entropy token (IDs, addresses, tx hashes) survived verbatim; dropped identifiers are re-appended under `ARTIFACTS (preserved verbatim):` — the trust contract. If summarization fails, the loop degrades to `safeTail` (transcript from the last user message onward).
+When the window fills, older working history is swapped into a consolidated active-session summary: `GOAL / DECISIONS / ARTIFACTS / OPEN / LAST_RESULTS / NEXT`. A `validateSummary` pass checks that every high-entropy token (IDs, addresses, tx hashes, file paths) survived verbatim. Dropped identifiers are re-appended under `ARTIFACTS (preserved verbatim):`. If summarization fails, the loop degrades to `safeTail` (transcript from the last user message onward).
 
 ## Recovery ladder
 
 | Rung | Action | When |
 | --- | --- | --- |
 | 1 | Retry with backoff | Transient / invocation errors (`MaxRetriesPerTool`, default 3) |
-| 2 | Adapt approach | Bad args/approach — error as signal (`MaxAdaptAttempts`, default 2) |
-| 3 | Escalate to MCL | Money / rigor boundary → `core_execute` |
+| 2 | Adapt approach | Bad args/approach, error as signal (`MaxAdaptAttempts`, default 2) |
+| 3 | Escalate to MCL | Money / rigor boundary -> `core_execute` |
 | 4 | Surface honest partial | After ladder exhaustion or stall |
+
+## Tool surface: Natural vs Escalate
+
+The tool surface classifies every tool into two execution surfaces:
+
+- **Natural**: reversible actions. Neo performs them directly, fully permissive. With MCL folded into Neo, the interactive agent carries the full tool surface directly; every manifest tool is Natural.
+- **Escalate**: money/signature actions. Reachable only through `core_execute`, which delegates to the MCL pipeline with inline approval. Neo holds no signing key.
+
+Spend policy is enforced network-side on the embedded wallet (PaxeerSpendPolicy), not by withholding tools. The autonomous (Automatrix/sub-agent) surface keeps its own explicit money-tool guard.
+
+## Memory pager
+
+The pager (`internal/memory/pager.go`) is Neo's memory controller over a single cortex actor store. It implements the RAM/disk/pager model:
+
+- **PINS** a small high-salience block every turn (identity + inviolable rules + active goal).
+- **PAGE-FAULTS** the top-K relevant records into the window on demand (semantic HNSW search when an embedder is running, else salience-ranked).
+- **Writes** durable learnings back to cortex (outcomes, facts, patterns) through the `Consolidator` interface.
+
+The `ConvRecaller` interface surfaces the most relevant past turns of this conversation (beyond the live transcript / resume seed) for a given query. It is the additive read-lane that lets an unbounded thread stay coherent through relevance over raw recency.
+
+## SSE event streaming
+
+The server speaks the daemon's `POST /chat` + `GET /events` contract so existing web and Telegram clients work unchanged.
+
+The broker fans per-run events out to SSE subscribers with a replay buffer (`maxReplayBuf = 512`) so clients that subscribe after POST /chat still receive every event. Per-subscriber channels have depth 256 with drop-on-backpressure.
+
+Wire envelope: `{seq, ts, phase, type, fields}` -- byte-compatible with the daemon's SSE format.
+
+Workspace surfaces classify tool calls into animated viewports:
+
+| Surface | Trigger | Render |
+|---|---|---|
+| `terminal` | shell / service commands | animated terminal window |
+| `browser` | browser_* + fetch | browser chrome + viewport |
+| `editor` | filesystem reads/writes | code-editor window |
+| `search` | web_search / web_news | running chip |
+| `media` | image/video/audio tools | running chip + media grid |
+| `action` | core_execute / everything else | minimal animated action chip |
+
+## The Engine struct
+
+The `Engine` (`internal/server/engine.go`) holds process-wide shared dependencies:
+
+- `main` / `cheap` / `subMain` - LLM clients (subMain is main with extended reasoning OFF for sub-agents)
+- `tools` - the one MCP tool surface
+- `pager` - the one cortex pager
+- `consolidator` - background write-back
+- `conv` - durable chat-thread history per conversation_id
+- `task` - durable task-supervision ledger (survives restart/suspend)
+- `trace` - durable per-run workspace timeline ("Neo's Computer")
+- `automatrix` - durable Automatrix completion inbox
+- `mediaDir` - machine-volume dir for generated + uploaded media
+- `preview` - Railway-sandbox preview controller
+- `broker` + `sessions` - SSE event fan-out and session registry
+- `automatrixGov` + `automatrixRunner` - Automatrix seams
+- `warmOnce` - first-request warm of embedder + HNSW semantic substrate
 
 ## Reporter
 
-Neo never writes to a terminal directly — it speaks through a `Reporter`: `Say` (user-facing answer), `Status` (ephemeral progress), `Notice` (deliberate visible promise). The CLI maps these to stdout/stderr; the server maps all three to SSE event types.
+Neo never writes to a terminal directly. It speaks through a `Reporter`:
+
+- `Say` - user-facing answer
+- `Status` - ephemeral progress
+- `Notice` - deliberate visible promise
+
+The CLI maps these to stdout/stderr. The server maps all three to SSE event types.
 
 ## Where to tune behavior
 
 | What to change | Where |
 | --- | --- |
-| System prompt text | `agent/prompt.go` — `systemPrompt()` |
-| Inviolable rules | `agent/prompt.go` — `invariantRules` |
+| System prompt text | `agent/prompt.go` - `systemPrompt()` |
+| Inviolable rules | `agent/prompt.go` - `invariantRules` |
 | Ground-truth facts | `agent/knowledge.md` (embedded in the binary) |
 | Compaction schema | `agent/compaction.go` |
-| Context thresholds / step budget | `config/config.go` — `SoftPct`, `HardPct`, `StepBudget` |
+| Context thresholds / step budget | `config/config.go` - `SoftPct`, `HardPct`, `StepBudget` |
+| Sub-agent concurrency | `config.Config.MaxConcurrentSubagents` |
+| Sub-agent step budget | `config.Config.SubagentStepBudget` |
+| Automatrix max attempts | `automatrixMaxAttempts` (const = 3) |
+| Sub-agent turn timeout | `subagentTurnTimeout` (const = 12 min) |
 
-<Card title="Core concepts" icon="lightbulb" href="/concepts">
-  How Neo relates to the MCL rigorous rail.
-</Card>
+<Columns cols={2}>
+  <Card title="Core concepts" icon="lightbulb" href="/concepts">
+    How Neo relates to the MCL rigorous rail.
+  </Card>
+  <Card title="Cortex internals" icon="database" href="/developer/cortex">
+    The memory store that Neo pages every turn.
+  </Card>
+</Columns>

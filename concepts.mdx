@@ -1,85 +1,175 @@
 ---
 title: Core Concepts
-description: "The mental model behind Matrix — intents and frames, the closed verb and object vocabularies, cortex memory, skills, envelopes, attestation, and the replay invariant."
+description: "The mental model behind Matrix: Neo, Cortex, MCL, Executor, LayerX, Deus, Chronos, Tachyon, and the tool ecosystem."
 ---
 
-Matrix is built around a small set of load-bearing ideas. Understanding these makes the rest of the docs click into place.
+Matrix is built around a small set of load-bearing components. Each has a clear responsibility. Understanding how they fit together makes the rest of the docs click into place.
 
-## The two rails
+## Neo: the conversational agent
 
-Every request enters through one of two rails over the same memory + execution substrate:
+Neo is the default agent entry point. It runs a recursive LLM tool-calling loop where the conversation transcript is the state. The model emits text and tool-call intents; the harness dispatches tools and feeds results back.
 
-<Columns cols={2}>
-  <Card title="Neo (conversational)" icon="comments">
-    A tool-calling loop with paged cortex memory. Permissive on reversible work; delegates monetary or irreversible work to the MCL rail.
-  </Card>
-  <Card title="MCL (rigorous)" icon="diagram-project">
-    Compiles prose into a typed, signed Intent IR, synthesizes a plan, and walks it deterministically. Used for high-stakes and on-chain work.
-  </Card>
-</Columns>
+Neo is fully permissive on reversible work: shell commands, code execution, web search, file operations. When it encounters a request that is monetary, on-chain, or irreversible, it delegates to the MCL rail through the `core_execute` tool.
 
-## Intent IR and the Frame
+Key properties of the Neo loop:
 
-The **Intent IR** is the typed artifact the MCL compiler produces from prose. The user reviews and signs it before anything executes — prose is display-only, the **Frame** is the source of truth.
+- **Per-turn step budget.** Each turn has a bounded number of tool-call steps. The loop detects stalls (no progress) and produces honest partial results on exhaustion, never fabricated success.
+- **Paged memory via Cortex.** Neo reads from and writes to Cortex. A background `Consolidator` promotes durable learnings from the conversation into long-term memory out-of-band.
+- **Conversational recall.** A relevance-based read lane surfaces the most relevant past turns beyond the live transcript, keeping long threads coherent without growing the context window.
+- **Tool transparency.** Every tool call is surfaced as a `ToolEvent` with its name, arguments, and result. Users see the real evidence behind an answer, not just a synthesized paragraph.
 
-A Frame carries:
+## Cortex: persistent memory
 
-- `verb` — one closed verb (see below)
-- `objects` — typed slot entries (`name`, `value`, `uri`, `type`)
-- `constraints` — typed limits (budget, allow/deny, policy, schema…)
-- `success_criteria` — typed predicates
-- `preferences` — ranked soft preferences
+Cortex is the per-actor typed memory graph. Each actor (user, agent, or service) gets its own Pebble database on disk. Every mutation is recorded in an append-only journal using canonical CBOR encoding with monotonic, gap-free sequence numbers.
 
-The Intent also carries `unknowns` (structured gaps), `confidence`, an optional `budget`, a self-`hash` for content addressing, and `CompileMetadata` (the D11 compilation trace: seed, mtx digest, model digest, grammar, skill id, cortex snapshot hash).
+Cortex stores nine memory types:
 
-## Closed vocabularies
+| Type | Purpose |
+| --- | --- |
+| `Identity` | Actor identity (name, DID, attributes) |
+| `Fact` | Verified statements about the world |
+| `Preference` | User or agent preferences with polarity and strength |
+| `Belief` | Stanced positions with evidence |
+| `Event` | Observed outcomes (transactions, interactions, incidents) |
+| `Goal` | Tracked objectives with status and horizon |
+| `Constraint` | Hard or soft limits on behavior |
+| `Capability` | Verified abilities of an actor or service |
+| `Pattern` | Observed regularities with strength and coverage |
 
-Matrix deliberately closes its vocabularies so intent survives multi-step execution.
+Each memory gets an auto-generated short and medium rendering form, ranked by a salience score that weighs recency, access frequency, citation count, declared importance, and vector similarity.
 
-<Columns cols={2}>
-  <Card title="10 verbs (D7)" icon="list-check">
-    `find` · `acquire` · `build` · `modify` · `deliver` · `analyze` · `negotiate` · `schedule` · `monitor` · `delegate`. Extension verbs use an `x:` prefix.
-  </Card>
-  <Card title="8 object kinds" icon="shapes">
-    `service` · `model` · `agent` · `knowledge` · `intent` · `asset` · `plan` · `capability`.
-  </Card>
-</Columns>
+Cortex also provides:
 
-## Skills
+- **Semantic search** via an async embedding pipeline and a pure-Go HNSW vector index (`Find Near`)
+- **Graph traversal** via typed edges (14 edge types) and bounded BFS (`Find From` / `Find Follow`)
+- **Merkle-anchored snapshots** with an `OverallRoot` that enables byte-deterministic replay
 
-A **skill** is a capability manifest authored in MatrixScript (`SKILL.mtx`) with a prose body (`SKILL.md`). Its `§PROCEDURE` declares `on verb=…` blocks that drive compilation: prompts, cortex resolutions, unknowns, and clarify questions. The compiler hashes the AST canonically (comments and whitespace do not affect the digest), so skills are reformat-safe and content-addressed.
+The defining correctness property: derived state can always be rebuilt byte-identically from the journal. This is the **replay invariant**, enforced on every PR.
 
-## Cortex
+## MCL: the typed intent pipeline
 
-**Cortex** is the per-actor typed memory graph, stored one Pebble DB per actor. It is authoritative and byte-deterministic:
+MCL (Matrix Communication Layer) converts natural language into typed, signed artifacts. No free-form side channels. Every user input produces a typed artifact.
 
-- An append-only **journal** records every mutation as canonical CBOR (monotonic, gap-free `seq`).
-- A **9-type memory taxonomy** with deterministic rendering forms (`short` / `medium` / `full`).
-- **Salience** scoring (5-factor cold score + EMA weight learner) ranks recall.
-- **Embeddings + a pure-Go HNSW vector index** power semantic `Find`.
-- **Snapshots** are Merkle-anchored (MMR + SMT-256) with an `OverallRoot`.
+The pipeline:
 
-## Envelopes and attestation
+1. **Draft.** User types natural language, producing an `intent.draft`.
+2. **Compile.** A seedable, grammar-constrained LLM converts the prose into a typed Intent IR. The compiler is written in MatrixScript (`.mtx`), a Matrix-native declarative DSL. Compilation is deterministic: the seed is `sha256(intent_id || actor || snapshot_hash || mtx_digest)`.
+3. **Accept.** The user reviews the typed Frame (verb, objects, constraints, success criteria, unknowns, confidence) and signs it. This is `intent.accept`.
+4. **Execute.** The Executor walks the plan.
+5. **Attest.** On completion, a signed `intent.attest` envelope records the outcome, optionally chain-anchored.
 
-Each lifecycle transition is recorded as a signed **envelope** (ed25519, canonical CBOR, written as JSON on disk under `journal/<intent_id>/<seq>-<kind>.json`). On a terminal state, `cortex.Attest` writes `KindAttest` + `KindLearnWeights` in one atomic batch, and the EMA learner pulls per-actor salience weights toward (or away from) the cited memories.
+The Frame is the source of truth, not the original prose. It carries:
 
-## The replay invariant
+- **Verb** from a closed vocabulary of 10: `find`, `acquire`, `build`, `modify`, `deliver`, `analyze`, `negotiate`, `schedule`, `monitor`, `delegate`. Extension verbs use an `x:` prefix.
+- **Objects** from 8 typed kinds: `service`, `model`, `agent`, `knowledge`, `intent`, `asset`, `plan`, `capability`.
+- **Constraints** (budget, allow/deny, policy, schema)
+- **Success criteria** (typed predicates)
+- **Preferences** (ranked soft preferences)
+- **Unknowns** (structured gaps with severity)
 
-The defining correctness property: derived state can always be rebuilt byte-identically from the journal.
+## Executor: the plan walker
 
-<Note>
-`DropDerived` removes every derived index, then the rebuilder walks heads, edges, and journal entries in order and re-emits them. `OverallRoot()` before and after **must be identical**. Any drift is a bug — this is enforced on every PR by the `replay-invariant` CI job.
-</Note>
+The Executor owns everything downstream of `intent.accept`: the lifecycle state machine, the plan-tree walker, tool dispatch, materiality classification, and the closing `intent.attest` or `intent.fail` envelope.
+
+Plan walking is depth-first with support for parallel branches and gates. Each step dispatches tool calls through MCP (Model Context Protocol) servers. The default agent manifest pins `filesystem-mcp`, `fetch-mcp`, and `git-mcp`.
+
+Key design decisions:
+
+- **MCP-native tool dispatch.** Tools are exposed via MCP servers over stdio or streamable HTTP. The Executor verifies that `tools/list` matches the manifest at startup.
+- **Materiality classification.** Plan modifications during execution are classified as material or non-material. Material changes halt execution and require re-accept.
+- **Replay determinism.** Tool outputs are captured as Cortex Fact memories at the moment of execution. Replays read from Cortex, never re-run tools.
+
+## LayerX: settlement fabric
+
+LayerX is the settlement and custody spine for agent balances. It provides escrow-backed, USD-denominated agent money (USDX) that agents use to pay for services, settle transactions, and transfer value.
+
+How it works:
+
+1. **Deposit.** Agents fund their USDX balance by depositing USDL (or swapping other tokens) into the LayerX vault. The depositing EVM address becomes the agent's payout address.
+2. **Pay.** Agents pay other agents by DID (`did:matrix:<label>:<keyfp>`) instantly and gaslessly. The sequencer signs receipts with Merkle inclusion proofs.
+3. **Settle.** Micropayments net-batch on a settlement window. The batch Merkle root anchors to Paxeer on settlement. Material amounts force-settle immediately.
+4. **Withdraw.** Agents burn USDX to release real USDL to their payout address, optionally swapping to another asset.
+
+Every `layerx_pay` returns a sequencer-signed receipt. Inclusion proofs and batch roots are independently verifiable via `layerx_receipt`.
+
+## Deus: service marketplace
+
+Deus is the agent-service marketplace. Service providers register listings; agents discover, quote, and invoke them.
+
+The flow:
+
+1. **Discover.** `deus_discover` searches service listings by plain language or filters.
+2. **Quote.** `deus_quote` returns a signed EIP-712 price quote for a specific operation.
+3. **Invoke.** `deus_invoke` calls the service. Payments ride LayerX: a priced call returns 402 with USDX terms, the bridge auto-signs and retries under the agent's spend leash.
+
+Agents have per-call and rolling daily USDX spend limits (`LAYERX_MAX_SPEND_USDX`, `LAYERX_MAX_DAILY_USDX`). Calls that exceed the leash surface the terms without signing.
+
+## Chronos: scheduler
+
+Chronos gives agents durable scheduling: one-shot alarms and recurring cron jobs that wake the agent with a contextful message.
+
+| Tool | Purpose |
+| --- | --- |
+| `alarm_set` | Schedule a wake (one-shot by delay or absolute time, or cron with timezone) |
+| `alarm_list` | List pending alarms with status and next fire time |
+| `alarm_get` | Fetch a specific alarm's details |
+| `alarm_cancel` | Cancel an active alarm |
+
+When an alarm fires, Chronos delivers the `wake_message` as a new agent turn, optionally resuming a specific conversation. The message is written to the agent's future self with enough context to act without re-deriving state.
+
+## Tachyon: smart contract engine
+
+Tachyon is the agent-native Solidity/EVM engine. It gives agents the ability to compile, test, simulate, and deploy smart contracts, all through the tool surface.
+
+| Tool | Purpose |
+| --- | --- |
+| `tachyon_compile` | Compile Solidity via Forge. Returns ABI and bytecode. Supports OpenZeppelin and forge-std imports automatically. |
+| `tachyon_test` | Run Forge test suites with structured per-case results (pass/fail/gas). |
+| `tachyon_simulate` | Dry-run an `eth_call` against any chain without broadcasting. |
+| `tachyon_deploy` | Deploy a compiled contract on-chain through the agent's embedded wallet. Idempotent via `idempotency_key`. |
+| `tachyon_call` | Invoke a contract method. Read mode (`simulate_only=true`) or write mode (signs and broadcasts). |
+
+Deployments are tracked in a registry. Agents can look up prior deployments by idempotency key and chain ID. Chain profiles are configurable; Paxeer mainnet (chain 125) is preconfigured.
+
+## Tools: the MCP ecosystem
+
+Matrix tools are MCP (Model Context Protocol) servers. Each tool module exposes a set of capabilities over stdio or streamable HTTP. The agent manifest declares which servers to spawn and which tools to register.
+
+Core tool modules:
+
+| Module | Capabilities |
+| --- | --- |
+| `paxeer` | 43 tools for Paxeer Network: RPC reads, block explorer, portfolio, markets, price feeds, wallet operations, precompile encoders (streams, scheduler, staking, oracle) |
+| `layerx` | USDX balance, deposit, pay, receipt verification, withdraw, force-settle |
+| `deus` | Service discovery, quoting, invocation with LayerX payment |
+| `chronos` | Alarm scheduling, listing, retrieval, cancellation |
+| `tachyon` | Solidity compilation, Forge testing, simulation, deployment, contract interaction |
+| `websearch` | Web search |
+| `searxng` | Metasearch via SearXNG |
+| `media` | Media processing |
+| `uwac` | Universal Web Agent Connector: OAuth vault to per-user MCP tools |
+| `skills` | Skill catalog indexing and conversion |
+| `scaffold` | Project scaffolding for 15+ frameworks (Next.js, React, Vue, Svelte, Go, Rust, Python, and more) |
+
+Tools are policy-gated. On-chain write operations go through the embedded wallet at `connect.paxportwallet.com`, where key material, signing, spend limits, and allow-lists are enforced network-side, not trusted to agent code.
 
 ## Hosting model
 
-In production each user gets their own daemon on a Fly Machine (auto-suspended when idle), fronted by `router` (JWT verify → wake → reverse-proxy). LLM calls flow through the metered `gateway`, which debits a per-user PAX credit ledger against a versioned rate card.
+In production, each user gets a dedicated daemon on a Fly Machine that auto-suspends when idle. A `router` service handles JWT verification, machine wake, and reverse-proxying. LLM calls flow through a metered `gateway` that debits a per-user PAX credit ledger against a versioned rate card.
+
+## Where to go next
 
 <Columns cols={2}>
-  <Card title="Glossary" icon="book" href="/glossary">
-    Quick definitions for every term used above.
+  <Card title="Architecture" icon="sitemap" href="/developer/architecture">
+    Module boundaries, cross-cutting flows, and load-bearing invariants.
   </Card>
-  <Card title="MCL & skill authoring" icon="diagram-project" href="/developer/mcl">
-    Write skills and understand the compiler pipeline.
+  <Card title="MCL deep dive" icon="diagram-project" href="/developer/mcl">
+    The compiler pipeline, MatrixScript, and skill authoring.
+  </Card>
+  <Card title="Cortex deep dive" icon="brain" href="/developer/cortex">
+    Memory types, salience, vector search, edges, and replay.
+  </Card>
+  <Card title="API Reference" icon="code" href="/api-reference/overview">
+    Daemon routes, service APIs, and tool surfaces.
   </Card>
 </Columns>

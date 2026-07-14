@@ -1,24 +1,80 @@
 ---
 title: MCL & Skill Authoring
-description: "The MatrixScript compiler pipeline and how to write a SKILL.mtx — required sections, the §PROCEDURE on-blocks, slot resolution, unknowns, and validation."
+description: "The MatrixScript compiler pipeline, Intent IR, typed envelopes, the matrix:// URI scheme, materiality classification, and how to write a SKILL.mtx."
 ---
 
-**MCL** (Matrix Communication Layer) is the compiler that turns prose + a `SKILL.mtx` + a verb hint into a typed **Intent IR**. It is stdlib-only outside the `llm/` package.
+**MCL** (Matrix Communication Layer) is the heart of Matrix. Every user intent passes through it: gets typed, gets signed, and is handed to the executor. No free-form side channels. No prose-only messages. Every input produces a typed artifact.
+
+Cortex is the brain (persistent typed memory). MCL is the heart (every intent pumps through it).
+
+## What MCL does
+
+1. User types natural language -> `intent.draft`
+2. MCL **compiler** (small seedable grammar-constrained LLM) converts it to typed `Intent IR`
+3. User reviews + signs the IR -> `intent.accept`
+4. Executor (main frontier LLM) walks the plan inside skills
+5. Completion -> `intent.attest` (signed, optionally chain-anchored)
+
+## Repository layout
+
+```
+MCL/
+├── README.md               # this file
+├── mtx/                    # MatrixScript runtime
+│   ├── spec.md             # language specification
+│   ├── grammar.bnf         # formal EBNF
+│   ├── lexer/              # Go: tokeniser
+│   ├── parser/             # Go: .mtx -> AST
+│   ├── ast/                # Go: AST node types
+│   ├── validator/          # Go: type-check .mtx against core grammar
+│   ├── interpreter/        # Go: walks AST + invokes LLM at prompt nodes
+│   └── canonical/          # Go: AST -> deterministic bytes (D11 hash input)
+├── core/                   # compiler-core .mtx modules (the framework)
+│   ├── verb.mtx            # closed verb vocab + classifier rules (D7)
+│   ├── frame.mtx           # Frame type: objects/constraints/criteria/prefs
+│   ├── constraint.mtx      # Constraint type set (closed + x: namespace)
+│   ├── predicate.mtx       # success_criteria predicate types
+│   ├── unknown.mtx         # gap severity + gap typing rules
+│   ├── pre_resolve.mtx     # NL ref -> matrix:// URI rules (D13)
+│   ├── confidence.mtx      # confidence scoring formula
+│   └── pipeline.mtx        # stage wiring (the 6-stage compiler pipeline)
+├── ir/                     # Intent IR: Go types + canonical CBOR codec
+├── envelope/               # MCL message envelope: sign / verify (ed25519)
+├── patch/                  # D8: typed SlotPatch <-> RFC 6902
+├── materiality/            # D9: plan-diff materiality classifier (section 18.1)
+├── uri/                    # matrix:// URI typed parser
+└── cmd/
+    ├── mclc/               # standalone compiler CLI
+    ├── mcl-validate/       # validate any .mtx file against core grammar
+    └── mcl-fmt/            # canonical JSON debug mirror of .mtx
+```
+
+## The language: MatrixScript (`.mtx`)
+
+The compiler is meta-programmed. Compiler logic, skill procedures, and the IR grammar itself are written in **MatrixScript** -- a Matrix-native declarative DSL. The Go runtime in `mtx/` interprets `.mtx` files; it does not contain compile logic.
+
+- **Syntax**: `SECTION` headers + `key=value` pairs (extended from `.kvx` DNA)
+- **Semantics**: pure data -- decision trees are literal data structures, not code
+- **Prompts**: structured typed blocks (`prompt { system="..." user="..." }`)
+- **Hashing**: AST-hashed (D11 determinism -- comments don't break the seed)
+- **Skills**: each skill's entire definition lives in `skills/<slug>/SKILL.mtx`
+
+See `mtx/spec.md` for the full language reference.
 
 ## Compiler pipeline
 
 <Steps>
-  <Step title="Lex & parse">
-    The lexer normalizes CRLF→LF, recognizes `§SECTION` headers, 2-space INDENT, and `matrix://` URIs. The recursive-descent parser follows the EBNF in `mtx/grammar.bnf` into an AST (`File` / `Section` / `OnBlock` / `PromptBlock`).
+  <Step title="Lex and parse">
+    The lexer normalizes CRLF to LF, recognizes `SECTION` headers, 2-space INDENT, and `matrix://` URIs. The recursive-descent parser follows the EBNF in `mtx/grammar.bnf` into an AST (`File` / `Section` / `OnBlock` / `PromptBlock`).
   </Step>
   <Step title="Validate">
-    The validator enforces the spec rules (V1–V12): required sections, version-pinned tool URIs, prompt blocks needing `system=`+`user=`, slots declared before use, closed `kind=` and `reason=` sets.
+    The validator enforces the spec rules (V1-V12): required sections, version-pinned tool URIs, prompt blocks needing `system=`+`user=`, slots declared before use, closed `kind=` and `reason=` sets.
   </Step>
   <Step title="Canonical hash">
-    The AST is hashed with sha256, excluding comments, blanks, and `§HASH` — so reformatting never changes the digest. Skills are content-addressed and reformat-safe.
+    The AST is hashed with sha256, excluding comments, blanks, and `HASH` -- so reformatting never changes the digest. Skills are content-addressed and reformat-safe.
   </Step>
-  <Step title="Interpret & extract">
-    The interpreter walks `§PROCEDURE` on-blocks first-match-wins, interpolates the prompt, resolves slots against cortex, and registers unknowns. The Frame is extracted under a grammar-constrained decode (`intent_frame@1`, temp=0, seed=42).
+  <Step title="Interpret and extract">
+    The interpreter walks `PROCEDURE` on-blocks first-match-wins, interpolates the prompt, resolves slots against cortex, and registers unknowns. The Frame is extracted under a grammar-constrained decode (`intent_frame@1`, temp=0, seed=42).
   </Step>
 </Steps>
 
@@ -27,35 +83,35 @@ description: "The MatrixScript compiler pipeline and how to write a SKILL.mtx �
 - **10 verbs (D7):** `find acquire build modify deliver analyze negotiate schedule monitor delegate`. Extensions use an `x:` prefix.
 - **8 object kinds:** `service model agent knowledge intent asset plan capability`.
 
-These are not extension points — adding a verb or kind is a journaled migration with an explicit schema-version bump.
+These are not extension points. Adding a verb or kind is a journaled migration with an explicit schema-version bump.
 
 ## Writing a SKILL.mtx
 
 A skill lives at `skills/<slug>/SKILL.mtx`. Every skill must have exactly these 8 sections (validator rule V1):
 
 ```mtx
-§SKILL
-§INPUTS
-§CORTEX
-§TOOLS
-§SUB_SKILLS
-§PROCEDURE
-§OUTPUTS
-§FAILURE_MODES
+SKILL
+INPUTS
+CORTEX
+TOOLS
+SUB_SKILLS
+PROCEDURE
+OUTPUTS
+FAILURE_MODES
 ```
 
-`§HASH` is optional and added by tooling — never write it by hand.
+`HASH` is optional and added by tooling; never write it by hand.
 
 ### Metadata and inputs
 
 ```mtx
-§SKILL
+SKILL
 name="Writing Plans"            # must be double-quoted
 version=1.0.0                   # semver
 mcl.verbs=build modify          # D7 closed set; space-separated
 description="Creates or updates a structured plan document"
 
-§INPUTS
+INPUTS
 slot target: ArtifactRef
   required
   hint="The plan document to create or update"
@@ -69,12 +125,12 @@ slot deadline: iso8601
 Always double-quote `hint=`, `reason=`, `prompt=`, and `description=` values. Unquoted, the lexer parses the words as a space-separated ident list and the value is silently wrong.
 </Warning>
 
-### The §PROCEDURE on-blocks
+### The PROCEDURE on-blocks
 
 The interpreter walks on-blocks top-to-bottom, first-match-wins. The standard pattern is one verb-branch per verb plus an `unknown` fallback:
 
 ```mtx
-§PROCEDURE
+PROCEDURE
 
 on verb=build
   kind="write"
@@ -106,19 +162,19 @@ end
 
 Every NL entity reference must resolve to a `matrix://` URI before the user signs (D13):
 
-- `cortex.find(type=…, near=…)` — typed semantic lookup (most common).
-- `cortex.resolve(name)` — exact resolution when the name is known.
-- `cortex.context(verb=…)` — fetch a full context bundle into a slot.
+- `cortex.find(type=..., near=...)` -- typed semantic lookup (most common).
+- `cortex.resolve(name)` -- exact resolution when the name is known.
+- `cortex.context(verb=...)` -- fetch a full context bundle into a slot.
 
 Unresolvable slots become **unknowns** with severity `blocking` (stops execution), `preferred`, or `optional` (advisory; still generates a clarify question).
 
 ### Tools, sub-skills, outputs, failures
 
 ```mtx
-§TOOLS
+TOOLS
 matrix://tool/mcp/filesystem/fs_write@0.1.0   # version-pinned; @latest rejected (V10)
 
-§FAILURE_MODES
+FAILURE_MODES
 budget_exceeded
   action=fail
   reason=out_of_budget          # closed set (V8)
@@ -126,6 +182,61 @@ budget_exceeded
 ```
 
 The `reason=` value must be in the closed set: `unknown_information`, `policy_violation`, `out_of_budget`, `out_of_scope`, `ambiguous_request`, `tool_failure`, `external_failure`, `timeout`, `cancelled_by_user`, `correction_invalid`.
+
+## Intent IR
+
+The Intent IR is the typed output of the compiler. It lives in `MCL/ir/` with Go types and a canonical CBOR codec. Key properties:
+
+- Content-addressed: the IR hash is deterministic given the same inputs.
+- Closed verb and kind vocabularies.
+- Frame extracted under grammar-constrained decode.
+- Slots resolved to `matrix://` URIs (D13 pre-resolution mandatory before sign-off).
+- Unknowns carry severity, reason, and options.
+
+## Envelopes
+
+The `MCL/envelope/` package defines all 15 MCL message kinds with ed25519 sign/verify:
+
+- `intent.draft` - initial compilation output
+- `intent.accept` - user signs the IR
+- `intent.reject` - user rejects
+- `intent.fail` - execution failure
+- `intent.attest` - completion attestation
+- And 10 more covering the full lifecycle.
+
+Canonical CBOR for signing; JSON for on-disk storage. Each envelope carries `SchemaVersion` byte mixed into signed bytes so schema bumps invalidate outstanding envelopes.
+
+## Patches (D8)
+
+The `MCL/patch/` package implements typed `SlotPatch` that maps to RFC 6902 on the wire. Patches are the mechanism for modifying intent slots after initial compilation without a full recompile.
+
+## Materiality (D9)
+
+The `MCL/materiality/` package implements the D9 section 18.1 classifier that determines whether a plan modification is material (requires user re-accept) or non-material. The executor calls this live during the plan walk. Material modifications halt execution.
+
+## URI scheme
+
+The `MCL/uri/` package parses the `matrix://` URI scheme:
+
+- `matrix://cortex/<type>/<id>#<version>` -- memory reference
+- `matrix://tool/mcp/<server>/<tool>@<version>` -- tool reference
+- `matrix://skill/<slug>` -- skill reference
+- `matrix://agent/<did>` -- agent reference
+- `matrix://journal/logs/<intent>/<step>` -- checkpoint reference
+
+`#latest` is forbidden at parse time (D13). All versions must be pinned before sign-off.
+
+## Key locked decisions
+
+| Decision | What | Where |
+| --- | --- | --- |
+| D7 | Closed verb vocab -- 10 verbs + `x:` extension | `core/verb.mtx` |
+| D8 | Typed SlotPatch -> RFC 6902 on wire | `patch/` |
+| D9 | Materiality algorithm (section 18.1) | `materiality/` |
+| D11 | Compiler determinism -- seed = sha256(intent.id \|\| actor \|\| snapshot_hash \|\| mtx_digest) | `mtx/canonical/` |
+| D13 | Pre-resolution mandatory before user sign-off | `core/pre_resolve.mtx` |
+| D18 | Compiler/executor split -- compiler = small seedable grammar-constrained | `cmd/mclc/` |
+| A9 | Compiler slot must be seedable + grammar_constrained | enforced in `cmd/mclc/` |
 
 ## Validate and dry-run
 
@@ -136,8 +247,13 @@ mclc compile -skill skills/my-skill/SKILL.mtx \
   -prose "Build a deployment plan" -verb build -dry-run
 ```
 
-`-dry-run` outputs `prompt_messages`, `slots`, `unknowns`, and `clarify_questions` — the exact interpolated text, no API key required. Add `FIREWORKS_API_KEY` to run the full pipeline and emit the real `frame_json`.
+`-dry-run` outputs `prompt_messages`, `slots`, `unknowns`, and `clarify_questions` -- the exact interpolated text, no API key required. Add `FIREWORKS_API_KEY` to run the full pipeline and emit the real `frame_json`.
 
-<Card title="MCL CLI reference" icon="terminal" href="/api-reference/cli">
-  Full `mclc` / `mcl-execute` / `mcl-tools` command surface.
-</Card>
+<Columns cols={2}>
+  <Card title="Executor" icon="gears" href="/developer/executor">
+    How the plan walker consumes the Intent IR MCL produces.
+  </Card>
+  <Card title="MCL CLI reference" icon="terminal" href="/api-reference/cli">
+    Full `mclc` / `mcl-execute` / `mcl-tools` command surface.
+  </Card>
+</Columns>

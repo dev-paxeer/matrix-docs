@@ -1,28 +1,28 @@
 ---
 title: MCP Overview
-description: "How Matrix uses the Model Context Protocol — DID-bound agent manifests, the matrix:// tool URI scheme, stdio/http transports, the exhaustive-tools bijection check, and credential refs."
+description: "How Matrix uses the Model Context Protocol for its tool surface: agent manifests, tool registration, the matrix:// URI scheme, stdio and http transports, bijection verification, and credential handling."
 ---
 
-Matrix agents reach the outside world exclusively through **MCP** (Model Context Protocol) tool servers. An agent's capabilities are defined by a DID-bound JSON manifest that declares which MCP servers it may spawn and exactly which tools each advertises.
+Matrix agents interact with the outside world exclusively through **MCP** (Model Context Protocol) tool servers. An agent's capabilities are defined by a DID-bound JSON manifest that declares which MCP servers it may spawn and exactly which tools each server advertises.
 
 <Info>
-Off-chain tools dispatch through MCP by design (locked decision Q4) — there is no custom fs/shell/http path. Everything an agent can do is an MCP tool resolved against its manifest.
+Off-chain tool dispatch goes through MCP by design. There is no custom filesystem, shell, or HTTP path. Everything an agent can do is an MCP tool resolved against its manifest.
 </Info>
 
 ## How it fits together
 
 <Steps>
   <Step title="Boot">
-    `executor/tool` loads the agent manifest and the `Manager` spawns each declared MCP server (subprocess for `stdio`, client for `http`).
+    The executor loads the agent manifest and the `Manager` spawns each declared MCP server (subprocess for `stdio`, client for `http`).
   </Step>
   <Step title="Verify (the bijection)">
-    The manager checks that the tools the server actually advertises match the manifest's `tools` list **exactly** — declared must equal discovered. Drift is rejected at boot (Q21).
+    The manager checks that the tools each server actually advertises match the manifest's `tools` list **exactly**. Declared must equal discovered. Any drift is rejected at boot.
   </Step>
   <Step title="Resolve">
-    When a plan emits a `matrix://tool/mcp/<alias>/<tool>@<version>` URI, the registry resolves it against the manifest and dispatches the call.
+    When a plan emits a `matrix://tool/mcp/<alias>/<tool>@<version>` URI, the registry resolves it against the manifest and dispatches the call to the correct server.
   </Step>
   <Step title="Gate">
-    The capability gate checks the call against the skill's `§TOOLS` allowlist and the manifest's `allowed_side_effects` before any side effect runs.
+    The capability gate checks the call against the skill's `§TOOLS` allowlist and the manifest's `allowed_side_effects` before any side effect executes.
   </Step>
 </Steps>
 
@@ -32,30 +32,49 @@ Off-chain tools dispatch through MCP by design (locked decision Q4) — there is
 matrix://tool/mcp/<server-alias>/<tool-name>@<version>
 ```
 
-URIs must be version-pinned (`@<semver>` or `@sha256:…`) — bare-head URIs raise `ErrUnpinnedTool` at parse time (Q17).
+URIs must be version-pinned (`@<semver>` or `@sha256:...`). Bare-head URIs without a version are rejected at parse time.
+
+## Tool registration
+
+Each MCP server in a manifest declares an exhaustive `tools` array. Every tool entry carries:
+
+| Field | Purpose |
+| --- | --- |
+| `name` | The tool's identifier, matching what the server advertises. |
+| `description` | Human-readable summary of what the tool does. |
+| `side_effect_class` | One of `read`, `write`, `network`, or `shell`. |
+| `timeout_ms` | Optional per-tool timeout override. |
+
+A call only executes if its `side_effect_class` appears in both the manifest's `allowed_side_effects` and the calling skill's tool allowlist.
 
 ## Transports
 
-| Transport | When |
+| Transport | When to use |
 | --- | --- |
-| `stdio` | Local subprocess servers (`npx`, `uvx`, `node`, `python3`). |
-| `http` | Streamable-HTTP remote servers. |
+| `stdio` | Local subprocess servers launched via `npx`, `uvx`, `node`, or `python3`. |
+| `http` | Streamable-HTTP remote servers (e.g., hosted APIs). |
 
-SSE-only transport is deferred (Q15).
+Each transport has its own launch configuration. `stdio` servers require `command` and `args`; `http` servers require `url` and optional `headers`.
 
 ## Credentials
 
-Server credentials are `$env:NAME` references in the manifest's `env` or `headers`, resolved from the executor's process environment at spawn time. **Literal credentials in a manifest are forbidden** — manifests are content-addressed and may be shared or journaled into cortex.
+Server credentials are `$env:NAME` references in the manifest's `env` or `headers` arrays, resolved from the executor's process environment at spawn time. Literal credentials in a manifest are forbidden, since manifests are content-addressed and may be shared or journaled.
 
 ```json
 "env": ["GITHUB_TOKEN=$env:GITHUB_TOKEN"]
 ```
 
+## Agent discovery
+
+Agents are defined as JSON files in the `agents/` directory. Each manifest declares its `agent` DID (`matrix://agent/<name>`), its `allowed_side_effects`, and its full `servers` array. At boot, the executor reads the manifest, spawns each server, verifies the tool bijection, and makes the tools available to the planning layer.
+
+The `native_tools` field in a manifest is the reserved slot for chain-level tools that bypass MCP entirely (e.g., precompile reads). These are resolved through a separate path and do not go through the MCP transport.
+
 <Columns cols={2}>
   <Card title="Agent manifests" icon="file-code" href="/mcp/agent-manifests">
     The manifest schema, field by field.
   </Card>
-  <Card title="Tool-server catalog" icon="plug" href="/mcp/tool-servers">
+  <Card title="Tool servers" icon="plug" href="/mcp/tool-servers">
     The servers the default agent ships with.
   </Card>
 </Columns>

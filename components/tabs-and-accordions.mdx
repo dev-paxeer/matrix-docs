@@ -1,58 +1,66 @@
 ---
 title: Tabs & Accordions
-description: "Organize content with Tabs for language or platform variants and AccordionGroup for collapsible FAQ-style sections that save vertical space."
+description: "Organize content with Tabs for language or platform variants, and AccordionGroup for collapsible FAQ-style sections that save vertical space."
 ---
 
 ## Tabs
 
-Show content in switchable panels:
+Tabs show content in switchable panels. Use them when the reader picks one path from several equal alternatives.
 
 <Tabs>
-  <Tab title="React">
-    ```jsx
-    function App() {
-      return <h1>Hello React</h1>;
-    }
+  <Tab title="Node.js">
+    ```javascript
+    import { Matrix } from '@matrix/sdk';
+
+    const client = new Matrix({ apiKey: process.env.MATRIX_API_KEY });
+    const result = await client.query('What is the block height?');
     ```
   </Tab>
-  <Tab title="Vue">
-    ```html
-    <template>
-      <h1>Hello Vue</h1>
-    </template>
+  <Tab title="Python">
+    ```python
+    from matrix_sdk import Matrix
+
+    client = Matrix(api_key=os.environ["MATRIX_API_KEY"])
+    result = client.query("What is the block height?")
     ```
   </Tab>
-  <Tab title="Svelte">
-    ```html
-    <h1>Hello Svelte</h1>
+  <Tab title="cURL">
+    ```bash
+    curl -X POST https://api.matrix.dev/query \
+      -H "Authorization: Bearer $MATRIX_API_KEY" \
+      -d '{"prompt": "What is the block height?"}'
     ```
   </Tab>
 </Tabs>
 
 ```mdx
 <Tabs>
-  <Tab title="React">
-    Content for the React tab.
+  <Tab title="Node.js">
+    ```javascript
+    const result = await client.query('What is the block height?');
+    ```
   </Tab>
-  <Tab title="Vue">
-    Content for the Vue tab.
+  <Tab title="Python">
+    ```python
+    result = client.query("What is the block height?")
+    ```
   </Tab>
 </Tabs>
 ```
 
 ## Accordions
 
-Collapsible sections for optional details:
+Accordion groups create collapsible sections for optional details, FAQs, or advanced content.
 
 <AccordionGroup>
-  <Accordion title="What is Jamdesk?">
-    Jamdesk is a documentation platform that builds and hosts your docs from MDX files in a GitHub repository.
+  <Accordion title="What is Matrix?">
+    Matrix is an agent platform that gives AI agents persistent tools, memory, and chain access through MCP (Model Context Protocol) servers.
   </Accordion>
-  <Accordion title="How do I deploy?">
-    Push to GitHub. Jamdesk builds and deploys automatically on every push.
+  <Accordion title="How do agents discover tools?">
+    At boot, the executor loads the agent manifest, spawns each declared MCP server, and verifies that the server's advertised tools match the manifest exactly. Tools are then available to the planning layer via `matrix://` URIs.
   </Accordion>
-  <Accordion title="Can I use a custom domain?">
-    Yes. Configure your custom domain in the Jamdesk dashboard under project settings.
+  <Accordion title="Can I add custom tools?">
+    Yes. Add an MCP server entry to your agent manifest, enumerate its tools, pin the package digest, and verify the bijection. See [Writing a Tool Bridge](/mcp/writing-a-tool-bridge).
   </Accordion>
 </AccordionGroup>
 
@@ -61,5 +69,20 @@ Collapsible sections for optional details:
   <Accordion title="Question here">
     Answer here.
   </Accordion>
+  <Accordion title="Another question">
+    Another answer.
+  </Accordion>
 </AccordionGroup>
 ```
+
+## When to use which
+
+| Component | Use when |
+| --- | --- |
+| `Tabs` | The reader picks one of several equal alternatives (language, platform, OS). |
+| `AccordionGroup` | Most readers will skip the content (FAQs, advanced options, troubleshooting). |
+| `Steps` | The reader must do the work in a specific order. |
+
+<Tip>
+If readers do all the work, use `Steps`. If they pick one path, use `Tabs`. If most readers skip it, use `AccordionGroup`.
+</Tip>

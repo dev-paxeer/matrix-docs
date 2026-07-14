@@ -2,8 +2,8 @@
 
 **Matrix** is the cognition and UX layer on [Paxeer Network](https://paxeer.app). It turns natural-language requests into typed, inspectable, replayable agent execution across two rails:
 
-- **Neo** — the default conversational tool-calling agent for reversible work
-- **MCL** — the rigorous rail for monetary or irreversible work (NL → Intent IR → Plan → Walk)
+- **Neo** - the default conversational tool-calling agent for reversible work
+- **MCL** - the rigorous rail for monetary or irreversible work (NL → Intent IR → Plan → Walk)
 
 This repository contains the official documentation for Matrix, hosted at [docs.matrixmcl.com](https://docs.matrixmcl.com).
 
@@ -29,13 +29,13 @@ Matrix is a polyglot monorepo of independently buildable Go modules plus MCP too
 
 ### Documentation Structure
 
-- **Get Started** — Introduction, quickstart, core concepts, glossary
-- **User Guide** — Chat interface, skills, wallet management
-- **Developer** — Architecture, module deep-dives, build/test/lint, contributing
-- **API Reference** — HTTP/SSE endpoints for all services
-- **MCP** — Model Context Protocol tool servers and agent manifests
-- **Reference** — Deep subsystem documentation (cortex, mcl, neo, chronos, tachyon, deus, layerx, skills, standards)
-- **FAQ** — Common questions for users, developers, ops, billing, security
+- **Get Started** - Introduction, quickstart, core concepts, glossary
+- **User Guide** - Chat interface, skills, wallet management
+- **Developer** - Architecture, module deep-dives, build/test/lint, contributing
+- **API Reference** - HTTP/SSE endpoints for all services
+- **MCP** - Model Context Protocol tool servers and agent manifests
+- **Reference** - Deep subsystem documentation (cortex, mcl, neo, chronos, tachyon, deus, layerx, skills, standards)
+- **FAQ** - Common questions for users, developers, ops, billing, security
 
 ## Building the Docs
 
@@ -59,9 +59,9 @@ jamdesk deploy
 
 This repository includes agent-friendly artifacts:
 
-- **`llms.txt`** — Structured index with descriptions for LLM consumption
-- **`sitemap.txt`** — Flat list of all documentation paths
-- **`agent.txt`** — Agent manifest describing structure, navigation, and known issues
+- **`llms.txt`** - Structured index with descriptions for LLM consumption
+- **`sitemap.txt`** - Flat list of all documentation paths
+- **`agent.txt`** - Agent manifest describing structure, navigation, and known issues
 
 When consuming these docs programmatically:
 1. Start with `/introduction`, `/concepts`, `/glossary` for the mental model

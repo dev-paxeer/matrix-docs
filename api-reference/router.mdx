@@ -1,46 +1,105 @@
 ---
 title: Router API
-description: "The public front door — validates a Supabase JWT, wakes the user's Fly Machine, and reverse-proxies to their daemon. Plus the internal admin and wake surfaces."
+description: "The public front door: validates a Supabase JWT, wakes the user's environment (Fly Machine or Railway service), and reverse-proxies to their daemon. Plus the internal admin and wake surfaces."
 ---
 
-The **router** is the only public service (`:443`). It validates a Supabase JWT, ensures the user's Fly Machine is awake, and reverse-proxies the request to their daemon over the WireGuard mesh.
+The **router** is the only public service (`:443`). It validates a Supabase JWT, ensures the user's environment is awake (Fly Machine or Railway service), and reverse-proxies the request to their daemon.
 
 ## Public surface
 
 | Method | Path | Auth | Purpose |
 | --- | --- | --- | --- |
-| GET | `/healthz` | none | Liveness (also pings the database). |
-| GET | `/v/version` | none | Router version. |
-| ANY | `/*` | Supabase JWT | Wake-then-reverse-proxy to the user's daemon (`/messages`, `/events`, `/intents/*`, …). |
+| GET | `/healthz` | none | Liveness (also pings the database) |
+| GET | `/v/version` | none | Router version |
+| ANY | `/*` | Supabase JWT | Wake-then-reverse-proxy to the user's daemon |
 
-All non-health traffic flows through the JWT middleware: the token identifies the user, the proxy calls `EnsureStarted` (waking the Machine and waiting for daemon readiness), then forwards.
+All non-health traffic flows through the JWT middleware: the token identifies the user, the proxy looks up the user's environment, wakes it if needed (with a configurable `WakeTimeout`, default 30s), waits for daemon readiness (polling `/healthz` on the environment), then forwards the request.
+
+### Cody routing
+
+Requests to `/cody/*` are routed to the co-located Cody engine (`codyd`) on its own port (default `:8090`). The `/cody` prefix is stripped before forwarding.
+
+### Environment lifecycle states
+
+| State | HTTP status | Meaning |
+| --- | --- | --- |
+| `active` | (proxied) | Environment running, request forwarded |
+| `provisioning` | 503 | Environment coming up; retry shortly |
+| `suspended` | 451 | Account suspended |
+| `deleted` | 410 | Account deleted |
 
 ## Internal surface
 
-The internal mux is bound to a private address (not public):
+The internal mux is bound to a private address (`ROUTER_INTERNAL_ADDR`, not public):
 
 | Method | Path | Auth | Purpose |
 | --- | --- | --- | --- |
-| GET | `/healthz` | none | Internal liveness. |
-| ANY | `/admin/users` | Admin token | Create / list users. |
-| ANY | `/admin/users/{...}` | Admin token | Per-user operations. |
-| POST | `/internal/wake` | Wake token | Force-wake a user's Machine (constant-time bearer). |
+| GET | `/healthz` | none | Internal liveness |
+| POST | `/admin/users` | Admin token | Create-or-touch user + ensure environment + volume |
+| GET | `/admin/users/{id}` | Admin token | Lookup user row (debug) |
+| DELETE | `/admin/users/{id}` | Admin token | Destroy environment + set state=deleted |
+| POST | `/admin/users/{id}/suspend` | Admin token | Set state=suspended |
+| POST | `/admin/users/{id}/restore` | Admin token | Set state=active |
 
 <Info>
-Admin routes mount only when `ROUTER_ADMIN_TOKEN` is set; the wake route mounts only when `ROUTER_WAKE_TOKEN` is set. Both use constant-time bearer comparison.
+Admin routes mount only when `ROUTER_ADMIN_TOKEN` is set. Both admin and wake routes use constant-time bearer comparison.
 </Info>
 
 ## Create a user (admin)
+
+`POST /admin/users` creates or touches a user and ensures an attached environment. The request blocks while the provider API provisions the volume and instance (synchronous in v1).
+
+<ParamField body="supabase_user_id" type="string" required>
+  The Supabase user UUID.
+</ParamField>
+<ParamField body="email" type="string">
+  User email (passed to the provisioner).
+</ParamField>
+<ParamField body="handle" type="string">
+  Optional user handle.
+</ParamField>
+<ParamField body="region" type="string">
+  Override the default region for this environment.
+</ParamField>
 
 <RequestExample>
 ```bash cURL
 curl -X POST http://router.internal/admin/users \
   -H "Authorization: Bearer $ROUTER_ADMIN_TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"user_id": "u_123", "email": "user@example.com"}'
+  -d '{"supabase_user_id": "uuid-here", "email": "user@example.com"}'
 ```
 </RequestExample>
 
+### Auto-provisioning (first request)
+
+When an authenticated user has no row in the database, the router can auto-provision their environment on the first request. This path is gated by an invite check: the user must have a redeemed invite. Concurrent first requests for the same user are deduplicated so only one environment is provisioned.
+
+## Provider support
+
+The router supports two environment providers, selected by `ROUTER_PROVIDER`:
+
+| Provider | Env var | Required credentials |
+| --- | --- | --- |
+| Fly (default) | `fly` | `FLY_API_TOKEN`, `FLY_APP_NAME`, `FLY_REGION` |
+| Railway | `railway` | `RAILWAY_API_TOKEN`, `RAILWAY_PROJECT_ID`, `RAILWAY_ENVIRONMENT_ID` |
+
+## Configuration
+
+| Env var | Default | Purpose |
+| --- | --- | --- |
+| `ROUTER_ADDR` | (required) | Public listen address (e.g. `:443`) |
+| `ROUTER_INTERNAL_ADDR` | (required) | Private admin listen address |
+| `SUPABASE_URL` | (required) | Supabase project URL for JWKS |
+| `DATABASE_URL` | (required) | Postgres connection string |
+| `ROUTER_ADMIN_TOKEN` | (empty) | Admin bearer token; empty disables admin |
+| `ROUTER_DAEMON_PORT` | `8080` | Port the daemon listens on per environment |
+| `ROUTER_CODY_PORT` | `8090` | Port codyd listens on per environment |
+| `ROUTER_WAKE_TIMEOUT` | `30s` | Deadline for environment wake |
+| `ROUTER_PROXY_TIMEOUT` | `5m` | Reverse-proxy timeout |
+| `ROUTER_PROBE_INTERVAL` | `250ms` | Poll cadence during daemon readiness wait |
+| `ROUTER_CORS_ORIGINS` | (allow-any) | Comma-separated browser CORS allow-list |
+
 <Card title="Deployment" icon="server" href="/developer/deployment">
-  How the router fits the per-user Fly Machine topology.
+  How the router fits the per-user environment topology.
 </Card>

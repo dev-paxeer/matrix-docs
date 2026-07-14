@@ -1,38 +1,88 @@
 ---
-title: Tool-Server Catalog
-description: "The MCP servers the default Matrix agent ships with — filesystem, fetch, web-search, browser, tachyon, deus, chronos, git, exec, media, paxeer-net, and uwac — and what each provides."
+title: Tool Servers
+description: "The MCP servers the default Matrix agent ships with: filesystem, fetch, web-search, browser, tachyon, git, exec, media, paxeer-net, chronos, layerx, and more."
 ---
 
-The default agent (`agents/default.json`) bundles twelve MCP servers. Tools resolve as `matrix://tool/mcp/<alias>/<tool>@<version>`.
+The default agent bundles a set of MCP servers that cover filesystem access, web interaction, code execution, chain operations, and media generation. Each server is declared in the agent manifest and resolves tools as `matrix://tool/mcp/<alias>/<tool>@<version>`.
 
 ## Default servers
 
 | Alias | Transport | Provides |
 | --- | --- | --- |
-| `fs` | stdio (`npx` filesystem) | Read/write files, list/search, directory trees, move, stat (read + write side effects). |
-| `fetch` | stdio (`uvx` fetch) | Fetch a URL and return Markdown (network). |
-| `web-search` | stdio (`node`) | `web_search` and `web_news` over the public web (network). |
-| `browser` | stdio (`node`) | Playwright-driven browser automation. |
-| `tachyon` | stdio (`node`) | Solidity/EVM compile, test, simulate, deploy, call. |
-| `deus` | stdio (`node`) | Marketplace discovery + metered service invoke. |
-| `chronos` | stdio (`node`) | Schedule and manage wake-up alarms. |
-| `git` | stdio (`uvx` git) | Repository operations over the workspace. |
-| `exec` | stdio (`node`) | Sandboxed shell execution (shell). |
-| `media` | stdio (`node`) | Media generation / handling. |
-| `paxeer-net` | stdio (`node`) | The public Paxeer chain surface — RPC, PaxScan, Argus, price, agent-economy precompiles, embedded-wallet writes. |
-| `uwac` | stdio (`node`) | Per-user external-app connectors via the OAuth vault. |
+| `fs` | stdio (`npx` filesystem) | Read/write files, list, search, directory trees, move, stat. |
+| `fetch` | stdio (`uvx` fetch) | Fetch a URL and return its content as Markdown. |
+| `web-search` | stdio (`node`) | `web_search` and `web_news` over the public web. |
+| `browser` | stdio (`node`) | Playwright-driven browser automation: navigate, click, type, screenshot, evaluate JS. |
+| `tachyon` | stdio (`node`) | Solidity/EVM compile, test, simulate, deploy, and call against the shared tachyond engine. |
+| `git` | stdio (`uvx` git) | Repository operations: status, diff, log, branch, commit, checkout. |
+| `exec` | stdio (`node`) | Shell execution and long-lived service supervision. |
+| `media` | stdio (`node`) | Image generation/editing, video generation, text-to-speech. |
+| `paxeer` | stdio (`node`) | Paxeer chain surface: RPC, PaxScan, Argus, price feeds, agent-economy precompiles, embedded-wallet writes. |
+| `chronos` | stdio (`node`) | Schedule and manage wake-up alarms (one-shot and cron). |
+| `layerx` | stdio (`node`) | LayerX USDX balance, deposits, gasless agent-to-agent payments, withdrawals. |
+| `kindle-reads` | stdio (`node`) | KindleLaunch DEX pool discovery, market data, quotes, and position queries. |
 
-## paxeer-net: chain access
+## paxeer: chain access
 
-`paxeer-net` exposes the Paxeer chain (Chain ID 125). Reads need no auth; chain **writes** sign through the Paxeer Embedded Wallet (custody network-side, spend-policy enforced at the wallet API) and are additionally pre-gated plan-time by `PaxeerSpendPolicy` (a per-call `PAXEER_SPEND_CAP_WEI` ceiling) before any side effect.
+The `paxeer` server exposes the Paxeer chain (Chain ID 125). It covers:
+
+**Read tools** (no auth required): `rpc_call`, `eth_call`, `contract_read`, `chain_info`, `get_balance`, `token_balance`, `paxscan_get`, `address_overview`, `address_transactions`, `tx`, `token_info`, `search`, `network_stats`, `portfolio`, `trending`, `price`, `market_get`, `points`, `oracle_price`, and more.
+
+**Write tools** (require embedded-wallet auth): `transfer`, `approve`, `stream_open`, `stream_settle`, `stream_close`, `schedule_job`, `delegate`, `undelegate`, `contract_write`, `wallet_layerx_deposit`, and more.
+
+Chain writes sign through the Paxeer Embedded Wallet. Custody and key material live network-side; spend limits and policy are enforced at the wallet API, never trusted to agent code. The `PaxeerSpendPolicy` pre-gates each write call with a per-call spend cap before any side effect runs.
 
 <Info>
-Headless wallet auth uses `PAXEER_WALLET_TOKEN` (or `PAXEER_WALLET_EMAIL` + `PAXEER_WALLET_PASSWORD` + `PAXEER_SUPABASE_ANON_KEY`). Without it, the chain bridge is read-only.
+Agent wallet auth uses an ed25519 executor key. The daemon mints a short-lived bearer token via challenge/verify against the wallet API. Without a valid key, the chain bridge is read-only.
 </Info>
+
+## tachyon: Solidity/EVM engine
+
+The `tachyon` server is a stdio proxy that bridges to a shared Fly-hosted tachyond instance over JSON-RPC. It provides:
+
+| Tool | Purpose |
+| --- | --- |
+| `tachyon_compile` | Compile Solidity with forge. Pass sources as a map; OpenZeppelin and forge-std resolve automatically. |
+| `tachyon_test` | Run Forge test suites with structured per-case results. |
+| `tachyon_simulate` | Dry-run an eth_call without broadcasting. |
+| `tachyon_deploy` | Deploy a compiled contract on-chain (idempotent via `idempotency_key`). |
+| `tachyon_call` | Invoke a contract method (simulate or broadcast). |
+| `tachyon_chain_list` / `tachyon_chain_register` | Manage chain RPC profiles. |
+| `tachyon_artifact_get` / `tachyon_registry_lookup` | Fetch cached artifacts or resolve prior deployments. |
+
+Boot decoupling: `initialize` and `tools/list` are answered locally from the static registry (`tachyon-tools.json`). The remote engine is contacted lazily on the first `tools/call`, so an unreachable engine never blocks daemon boot.
+
+## exec: shell and service supervision
+
+The `exec` server provides:
+
+| Tool | Purpose |
+| --- | --- |
+| `shell` | Run a shell command to completion (bash -lc) with cwd, env, and timeout. |
+| `service_start` | Start or replace a long-lived background service that survives the tool call. |
+| `service_list` | List supervised services with status, pid, uptime, and command. |
+| `service_logs` | Tail a service's combined stdout+stderr log. |
+| `service_stop` | Stop a service (SIGTERM then SIGKILL the process group). |
+| `service_restart` | Restart a service from its recorded command. |
+
+Services persist across daemon restarts. On boot, the exec server re-spawns every service flagged `autostart` whose recorded pid is dead. The service registry and per-service logs live on the persisted volume (`MATRIX_EXEC_STATE_DIR`).
+
+## media: generation and editing
+
+The `media` server provides image, video, and audio generation:
+
+| Tool | Purpose |
+| --- | --- |
+| `generate_image` | Text-to-image generation. |
+| `edit_image` | Restyle or transform an existing image. |
+| `inpaint_image` | Repaint a masked region of an image. |
+| `remove_background` / `replace_background` | Background removal or replacement. |
+| `generate_video` / `animate_image` | Text-to-video and image-to-video generation. |
+| `generate_speech` | Text-to-speech conversion. |
 
 ## Side-effect classes
 
-Every tool declares a `side_effect_class` — `read`, `write`, `network`, or `shell`. A call only runs if its class is in the manifest's `allowed_side_effects` and the skill's `§TOOLS` allowlist.
+Every tool declares a `side_effect_class`: `read`, `write`, `network`, or `shell`. A call only runs if its class is in the manifest's `allowed_side_effects` and the calling skill's tool allowlist.
 
 <Columns cols={2}>
   <Card title="Write a tool bridge" icon="screwdriver-wrench" href="/mcp/writing-a-tool-bridge">

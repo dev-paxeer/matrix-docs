@@ -1,51 +1,63 @@
 ---
 title: Quickstart
-description: "Clone matrix-core, build the nine Go modules, compile your first intent, drive an end-to-end walk, and run the per-user daemon."
+description: "Clone matrix-core, build the modules, configure your environment, and run your first agent interaction."
 ---
 
-This guide takes you from a fresh clone to a running daemon. Matrix is a polyglot monorepo of independently buildable Go modules plus MCP tool servers.
+This guide takes you from a fresh clone to a running Matrix agent. The monorepo contains independently buildable Go modules and MCP tool servers.
 
 ## Prerequisites
 
-<Columns cols={2}>
-  <Card title="Go 1.22+" icon="golang">
-    The toolchain is pinned across every module.
-  </Card>
-  <Card title="GNU make 4.x" icon="hammer">
-    The root `Makefile` drives all module builds and tests.
-  </Card>
-  <Card title="Node 20+, npx, Python 3.11+, uv" icon="boxes-stacked">
-    Required for the MCP-server-driven flows (filesystem, fetch, git, browser, …).
-  </Card>
-  <Card title="Docker + buildx" icon="docker">
-    Only needed to build the per-user daemon image.
-  </Card>
-</Columns>
+| Tool | Version | Purpose |
+| --- | --- | --- |
+| Go | 1.22+ | All Go modules are pinned to this toolchain |
+| GNU make | 4.x | Root Makefile drives builds and tests |
+| Node.js | 20+ | MCP tool servers (filesystem, fetch, git, browser, Paxeer, etc.) |
+| Python | 3.11+ | Skill indexing and conversion utilities |
+
+Docker and buildx are only needed if you plan to build the per-user daemon container image.
 
 ## 1. Clone and build
 
 ```bash
 git clone https://github.com/paxlabs-inc/matrix-core.git
 cd matrix-core
-make build      # compile all nine Go modules
-make install    # drop the runnable CLIs into ./bin
-make test       # go test -count=1 -race ./... per module
-make ci         # gofmt-check + vet + tests (mirrors GitHub Actions)
+
+make build      # compile all Go modules
+make install    # place CLIs in ./bin
+make test       # run tests across all modules
 ```
 
-<Tip>
-Need `golangci-lint` locally? Run `make lint-install` (pinned to v1.61.0) then `make lint`.
-</Tip>
+The build produces the following CLIs in `./bin`:
 
-## 2. Configure secrets
+| CLI | Purpose |
+| --- | --- |
+| `mclc` | MCL compiler: prose to Intent IR |
+| `mcl-execute` | Plan walker and per-user daemon |
+| `mcl-validate` | Validate MatrixScript (`.mtx`) files |
+| `mcl-fmt` | Debug-format `.mtx` as canonical JSON |
+| `cortex-shell` | Interactive cortex read/write/query CLI |
+
+## 2. Configure
 
 ```bash
 cp .env.example .env
-# FIREWORKS_API_KEY / TOGETHER_API_KEY — required for any non-dry-run compile
-# MATRIX_DAEMON_TOKEN — set if running the daemon with auth
 ```
 
-`.env` is gitignored; `.env.example` documents every variable Matrix reads.
+Edit `.env` and set the required keys:
+
+```bash
+# LLM provider key (required for compilation and plan walking)
+FIREWORKS_API_KEY=your_key_here
+
+# Wallet auth (required for on-chain writes; reads work without it)
+PAXEER_WALLET_EMAIL=you@example.com
+PAXEER_WALLET_PASSWORD=your_password
+
+# Optional: per-user daemon auth token
+MATRIX_DAEMON_TOKEN=your_token
+```
+
+The `.env` file is gitignored. See `.env.example` for the full list of variables and their defaults.
 
 ## 3. Compile your first intent
 
@@ -53,12 +65,12 @@ cp .env.example .env
 ./bin/mclc compile \
   -skill skills/writing-plans/SKILL.mtx \
   -prose "Build a deployment pipeline for my Node.js app" \
-  -verb  build
+  -verb build
 ```
 
-With `FIREWORKS_API_KEY` set the compiler emits a real Intent Frame (verb, typed objects, blocking unknowns). Without keys it falls back to dry-run mode and prints the fully-interpolated prompt structure.
+With a valid `FIREWORKS_API_KEY`, the compiler emits a typed Intent Frame containing the verb, typed object slots, blocking unknowns, confidence score, and compilation metadata. Without an API key, it falls back to dry-run mode and prints the interpolated prompt structure.
 
-## 4. Drive an end-to-end walk
+## 4. Walk a plan end-to-end
 
 ```bash
 ./bin/mcl-execute walk \
@@ -68,46 +80,73 @@ With `FIREWORKS_API_KEY` set the compiler emits a real Intent Frame (verb, typed
   -skills-root ./skills
 ```
 
-This loads the agent manifest, spawns the MCP servers it declares, compiles the prose into an Intent + PlanTree, walks the plan, journals every step as a cortex Event, and ends with `cortex.Attest` writing `KindAttest` + `KindLearnWeights` atomically.
+This command:
 
-## 5. Run the daemon
+1. Loads the agent manifest (which MCP servers and tools to spawn)
+2. Compiles the prose into an Intent and PlanTree
+3. Walks the plan step-by-step, dispatching tool calls through MCP
+4. Journals every step as a Cortex Event memory
+5. Writes a signed `KindAttest` and `KindLearnWeights` on completion
 
-<Steps>
-  <Step title="Start the per-user daemon">
-    ```bash
-    ./bin/mcl-execute daemon \
-      -addr        :8080 \
-      -cortex-root ./runs/dev-cortex \
-      -manifest    agents/default.json \
-      -skills-root ./skills
-    ```
-  </Step>
-  <Step title="Talk to it">
-    The daemon exposes an HTTP + SSE surface. The most common routes:
+## 5. Run the per-user daemon
 
-    | Method | Path | Purpose |
-    | --- | --- | --- |
-    | GET | `/healthz` | Liveness + SSE broker stats |
-    | POST | `/chat` | Converse with the agent (Neo front door) |
-    | GET | `/events` | Server-Sent Events tail (transcript) |
-    | POST | `/messages` | Submit a prose message (rigorous rail) |
-    | GET | `/intents/{id}` | Read the intent envelope chain by ID |
-    | GET | `/me` | Per-user settings + identity |
-    | POST | `/shutdown` | Graceful drain |
-  </Step>
-</Steps>
+```bash
+./bin/mcl-execute daemon \
+  -addr        :8080 \
+  -cortex-root ./runs/dev-cortex \
+  -manifest    agents/default.json \
+  -skills-root ./skills
+```
 
-<Note>
-The full route reference, request/response shapes, and per-service APIs live under [API Reference](/api-reference/daemon).
-</Note>
+The daemon exposes an HTTP and SSE surface:
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `GET` | `/healthz` | Liveness check and SSE broker stats |
+| `POST` | `/chat` | Conversational entry point (Neo rail) |
+| `GET` | `/events` | Server-Sent Events tail (live transcript) |
+| `POST` | `/messages` | Submit prose for rigorous-rail execution |
+| `GET` | `/intents/{id}` | Read the signed envelope chain for an intent |
+| `GET` | `/me` | Per-user identity and settings |
+| `POST` | `/shutdown` | Graceful drain |
+
+The full route reference, request/response shapes, and per-service APIs are in the [API Reference](/api-reference/daemon).
+
+## 6. Explore Cortex interactively
+
+Use the cortex shell to read and write memories directly:
+
+```bash
+# Write an identity memory
+./bin/cortex-shell -root ./runs/dev-cortex -actor dev \
+  write Identity '{"name":"Developer","did":"did:pax:dev"}'
+
+# Write a preference
+./bin/cortex-shell -root ./runs/dev-cortex -actor dev \
+  write Preference '{"topic":"code_style","polarity":"prefer","strengthval":0.9,"rationale":"terse"}'
+
+# List all memories of a type
+./bin/cortex-shell -root ./runs/dev-cortex -actor dev \
+  list Preference
+
+# Dump the full journal
+./bin/cortex-shell -root ./runs/dev-cortex -actor dev \
+  dump
+```
 
 ## What's next
 
 <Columns cols={2}>
   <Card title="Core concepts" icon="lightbulb" href="/concepts">
-    The mental model behind intents, plans, cortex, and replay.
+    The architecture and mental model behind the platform.
+  </Card>
+  <Card title="MCL and skills" icon="diagram-project" href="/developer/mcl">
+    Write skills and understand the compiler pipeline.
+  </Card>
+  <Card title="Cortex deep dive" icon="brain" href="/developer/cortex">
+    Memory types, salience, vector search, and the replay invariant.
   </Card>
   <Card title="Architecture" icon="sitemap" href="/developer/architecture">
-    Module boundaries, cross-cutting flows, and invariants.
+    Module boundaries, data flows, and correctness invariants.
   </Card>
 </Columns>

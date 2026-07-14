@@ -1,22 +1,38 @@
 ---
 title: Developers FAQ
-description: "Questions for people building on Matrix — modules, skill authoring, the replay invariant, closed vocabularies, and contribution rules."
+description: "Questions for people building on Matrix: modules, skill authoring, the replay invariant, closed vocabularies, MCP tool servers, and contribution rules."
 ---
 
 <AccordionGroup>
   <Accordion title="How do I build the project?">
-    `make build` compiles the Go modules, `make install` drops CLIs into `./bin`, and `make ci` runs the full local gate. See [Build, Test & Lint](/developer/build-test-lint).
+    Clone the repository, then run `make build` to compile all Go modules, `make install` to drop CLIs into `./bin`, and `make test` to run the test suite. `make ci` runs the full local gate (gofmt + vet + tests), mirroring GitHub Actions. Prerequisites: Go 1.22+, GNU Make 4.x, Node.js 20+, Python 3.11+, Docker with Buildx.
   </Accordion>
+
   <Accordion title="How do I add a new capability?">
-    Author a `SKILL.mtx` (see [MCL & Skill Authoring](/developer/mcl)) and grant it the version-pinned tool URIs it needs. To add a new tool, register an MCP server in the agent manifest (see [Writing a Tool Bridge](/mcp/writing-a-tool-bridge)).
+    Author a `SKILL.mtx` (MatrixScript) file and grant it the version-pinned tool URIs it needs. To add a new tool server, register an MCP server entry in the agent manifest (`agents/*.json`). The manifest declares the server alias, transport, command, package digest, and an exhaustive list of every tool the server advertises. The executor rejects drift at boot if the manifest does not match.
   </Accordion>
+
+  <Accordion title="How do I add a new MCP tool server?">
+    Add a server entry to the agent manifest with `alias`, `transport` (`stdio` or `http`), `command`/`args`, `package_digest` (sha256 of the published package), and an exhaustive `tools` array. Credential references use `$env:NAME` syntax in the `env` or `headers` fields; literal secrets in the manifest are forbidden. See the `default.json` manifest for the canonical structure.
+  </Accordion>
+
   <Accordion title="Can I add a new verb or object kind?">
-    Not casually. The 10 verbs (D7) and 8 object kinds are closed vocabularies. Adding one is a journaled migration with an explicit schema-version bump — not a one-line change.
+    Not casually. The 10 verbs and 8 object kinds are closed vocabularies. Adding one requires a journaled migration with an explicit schema-version bump, not a one-line change. The closed-verb protocol is a core design decision that ensures intent between agents is always exact.
   </Accordion>
+
   <Accordion title="What is the replay invariant and why do I care?">
-    Dropping cortex's derived state and rebuilding from the journal must yield a byte-identical `OverallRoot`. Any change to a cortex mutation path must preserve it and add a rebuild test. It runs on every PR.
+    Dropping Cortex's derived state and rebuilding from the journal must yield a byte-identical `OverallRoot`. Any change to a Cortex mutation path must preserve this invariant and add a rebuild test. The invariant runs on every pull request via `make ci`. It guarantees that nothing an agent did is unaccounted for, and nothing it did not do is hidden.
   </Accordion>
-  <Accordion title="What's the bar for a PR?">
-    A clean `make ci` + `make lint`, tests for new behavior, no weakened tests, and a `matrix.kvx` update if you move a phase status or invariant. Design changes that move a locked decision need a design-review PR first.
+
+  <Accordion title="What is the tool URI scheme?">
+    Tools are referenced as `matrix://tool/mcp/<server-alias>/<tool-name>@<version>`. The version pin is resolved against the agent manifest at boot. The `package_digest` in the manifest (sha256 of the published server package) makes digest changes auditable through the `cortex_snapshot_hash` of any plan.
+  </Accordion>
+
+  <Accordion title="How does the gateway meter LLM calls?">
+    The gateway mediates every per-user daemon's LLM call to upstream providers (Fireworks, Together). It looks up the model in a versioned rate card, prices input/output tokens, debits the Postgres `credit_ledger`, and enforces a daily PAX hard-stop per actor. Each ledger row records the rate-table version used so historical costs replay byte-identically after a reprice.
+  </Accordion>
+
+  <Accordion title="What is the bar for a PR?">
+    A clean `make ci` plus `make lint`, tests for new behavior, no weakened tests, and a `matrix.kvx` update if you move a phase status or invariant. Design changes that move a locked decision need a design-review PR first. Issues, bug reports, and security disclosures are always welcome.
   </Accordion>
 </AccordionGroup>
