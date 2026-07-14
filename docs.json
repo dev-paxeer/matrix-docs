@@ -1,6 +1,6 @@
 {
   "$schema": "https://jamdesk.com/docs.json",
-  "name": "MatrixOS",
+  "name": "Matrix",
   "theme": "jam",
   "colors": {
     "primary": "#353530",
@@ -29,16 +29,12 @@
       ]
     }
   },
-  "logo": {
-    "light": "logo/wordmark_light.png",
-    "dark": "logo/wordmark.png",
-    "href": "https://docs.matrixmcl.com"
-  },
+  "logo": "https://www.matrixmcl.com/matrix/logomatrix.png",
   "navbar": {
     "primary": {
       "type": "button",
       "label": "Get Started",
-      "href": "/introduction"
+      "href": "https://www.matrixmcl.com"
     }
   },
   "navigation": {
@@ -305,5 +301,9 @@
         ]
       }
     ]
+  },
+  "favicon": "https://www.matrixmcl.com/matrix/logomatrix.png",
+  "fonts": {
+    "family": ""
   }
 }
