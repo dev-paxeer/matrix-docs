@@ -305,9 +305,8 @@
   "logo": "logo/matrix-wordmark.png",
   "footer": {
     "socials": {
-      "github": "https://github.com/PaxLabs",
-      "x": "https://x.com/paxeer",
-      "discord": "https://discord.gg/paxeer"
+      "github": "https://github.com/PaxLabs-inc",
+      "x": "https://x.com/paxeer_app",
     },
     "links": [
       {
@@ -315,91 +314,6 @@
         "items": [
           { "label": "Matrix", "href": "https://matrixmcl.com/product" },
           { "label": "Paxeer Network", "href": "https://paxeer.app" },
-          { "label": "Paxport Vault", "href": "https://paxportwallet.com" },
-          { "label": "Paxeer Cloud", "href": "https://cloud.paxeer.app" },
-          { "label": "Kindle Launch", "href": "https://kindlelaunch.com" }
-        ]
-      },
-      {
-        "header": "Matrix Agents",
-        "items": [
-          { "label": "Neo · your agent", "href": "https://matrixmcl.com/neo" },
-          { "label": "Cortex · memory", "href": "https://matrixmcl.com/cortex" },
-          { "label": "Cody · coding agent", "href": "https://matrixmcl.com/cody" },
-          { "label": "Approvals", "href": "https://matrixmcl.com/product#approvals" },
-          { "label": "Signed receipts", "href": "https://matrixmcl.com/product#receipt" },
-          { "label": "MCL · command line", "href": "https://matrixmcl.com/product#cli" },
-          { "label": "Cassandra", "href": "https://matrixmcl.com/agents#cassandra" },
-          { "label": "Gideon", "href": "https://matrixmcl.com/agents#gideon" },
-          { "label": "Forge", "href": "https://matrixmcl.com/agents#forge" },
-          { "label": "The MCL Triage", "href": "https://matrixmcl.com/agents#triage" },
-          { "label": "Solutions", "href": "https://matrixmcl.com/solutions" }
-        ]
-      },
-      {
-        "header": "Resources",
-        "items": [
-          { "label": "Documentation", "href": "https://matrixmcl.com/docs" },
-          { "label": "Quickstart", "href": "https://matrixmcl.com/docs#quickstart" },
-          { "label": "Agents SDK", "href": "https://matrixmcl.com/docs#agents" },
-          { "label": "MCL reference", "href": "https://matrixmcl.com/docs#cli" },
-          { "label": "Receipts & audit", "href": "https://matrixmcl.com/docs#receipts" },
-          { "label": "Developer docs", "href": "https://matrixmcl.com/docs" },
-          { "label": "Pricing", "href": "https://matrixmcl.com/pricing" },
-          { "label": "Ecosystem", "href": "https://matrixmcl.com/ecosystem" },
-          { "label": "Marketplace", "href": "https://matrixmcl.com/ecosystem#marketplace" },
-          { "label": "Console login", "href": "https://matrixmcl.com/contact" },
-          { "label": "Blog", "href": "https://matrixmcl.com/blog" },
-          { "label": "Community", "href": "https://matrixmcl.com/community" },
-          { "label": "Connectors", "href": "https://matrixmcl.com/ecosystem#connectors" },
-          { "label": "Courses", "href": "https://matrixmcl.com/learn#courses" },
-          { "label": "Customer stories", "href": "https://matrixmcl.com/customers" },
-          { "label": "Engineering at PaxLabs", "href": "https://matrixmcl.com/how-matrix-was-built" },
-          { "label": "Tutorials", "href": "https://matrixmcl.com/learn#tutorials" },
-          { "label": "Use cases", "href": "https://matrixmcl.com/solutions" }
-        ]
-      },
-      {
-        "header": "Company",
-        "items": [
-          { "label": "Manifesto", "href": "https://matrixmcl.com/company#manifesto" },
-          { "label": "Core principles", "href": "https://matrixmcl.com/company#principles" },
-          { "label": "Our story", "href": "https://matrixmcl.com/company#story" },
-          { "label": "Contact", "href": "https://matrixmcl.com/contact" },
-          { "label": "Press & media", "href": "https://matrixmcl.com/contact" },
-          { "label": "Careers · soon", "href": "https://matrixmcl.com/contact" },
-          { "label": "PaxLabs Inc", "href": "https://matrixmcl.com/paxlabs" },
-          { "label": "Research", "href": "https://matrixmcl.com/research" },
-          { "label": "News", "href": "https://matrixmcl.com/blog" },
-          { "label": "Responsible Scaling Policy", "href": "https://matrixmcl.com/transparency/responsible-scaling" },
-          { "label": "Security and compliance", "href": "https://matrixmcl.com/security" },
-          { "label": "Transparency", "href": "https://matrixmcl.com/transparency" },
-          { "label": "Safety & Evaluation Report", "href": "https://matrixmcl.com/transparency/safety-report" },
-          { "label": "Responsible Practices", "href": "https://matrixmcl.com/transparency/responsible-practices" },
-          { "label": "Scaffolding Over Scale", "href": "https://scaffolding-over-scale.vercel.app/" },
-          { "label": "Absence Blindness", "href": "https://absence-blindness.sites.paxeer.app/" },
-          { "label": "How Matrix was built", "href": "https://matrixmcl.com/how-matrix-was-built" }
-        ]
-      },
-      {
-        "header": "Legal",
-        "items": [
-          { "label": "Terms of Service", "href": "https://matrixmcl.com/legal/terms-of-service" },
-          { "label": "Privacy Policy", "href": "https://matrixmcl.com/legal/privacy-policy" },
-          { "label": "Acceptable Use", "href": "https://matrixmcl.com/legal/acceptable-use-policy" },
-          { "label": "AI Agent Use Policy", "href": "https://matrixmcl.com/legal/ai-agent-responsible-use-policy" },
-          { "label": "M2M Agreement", "href": "https://matrixmcl.com/legal/machine-to-machine-m2m-agreement" },
-          { "label": "API License", "href": "https://matrixmcl.com/legal/api-terms-of-use-license-agreement" },
-          { "label": "AML / KYC", "href": "https://matrixmcl.com/legal/aml-kyc-policy" },
-          { "label": "EU AI Act", "href": "https://matrixmcl.com/legal/eu-ai-act-compliance" },
-          { "label": "Compliance Statement", "href": "https://matrixmcl.com/legal/compliance-statement" },
-          { "label": "Regulatory Overview", "href": "https://matrixmcl.com/legal/regulatory-infrastructure-overview" },
-          { "label": "Governance Framework", "href": "https://matrixmcl.com/legal/consolidated-governance-and-liability-framework" },
-          { "label": "Training Centre", "href": "https://matrixmcl.com/legal/user-facing-compliance-training-centre" },
-          { "label": "On-Chain Privacy", "href": "https://matrixmcl.com/legal/on-chain-data-privacy-notice" },
-          { "label": "Refunds", "href": "https://matrixmcl.com/legal/refunds" },
-          { "label": "Risk Disclosure", "href": "https://matrixmcl.com/legal/risk-disclosure" },
-          { "label": "All documents", "href": "https://matrixmcl.com/legal" }
         ]
       }
     ]
