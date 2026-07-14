@@ -1,0 +1,272 @@
+/* ═══════════════════════════════════════════════════════════════════════
+   Matrix × Jamdesk — custom style.css
+   Maps paxlabs-inc/matrix-brand-kit tokens/colors.css onto Jamdesk's
+   CSS variable schema. Dark-only, warm-charcoal aesthetic.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/* ── Fonts ─────────────────────────────────────────────────────────── */
+@import url('https://fonts.googleapis.com/css2?family=Instrument+Serif&family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+
+:root {
+  --font-family-sans: 'DM Sans', system-ui, -apple-system, sans-serif;
+  --font-family-mono: 'JetBrains Mono', 'Fira Code', monospace;
+
+  /* ── Layout ────────────────────────────────────────────────────── */
+  --content-max-width: 920px;
+  --sidebar-width: 280px;
+
+  /* ── Radius ────────────────────────────────────────────────────── */
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+
+  /* ═══════════════════════════════════════════════════════════════════
+     Jamdesk core color variables (dark-only — Matrix has no light mode)
+     ═══════════════════════════════════════════════════════════════════ */
+  --color-background:     #161615;   /* --background          */
+  --color-text:           #e3d9d4;   /* --foreground           */
+  --color-text-muted:     #96918e;   /* --muted-foreground     */
+  --color-border:         #2a2a27;   /* --border / --gray-800  */
+  --color-code-bg:        #1b1b19;   /* --card surface         */
+
+  /* ── Primary (sage accent — the single accent) ─────────────── */
+  --color-primary:        #99bd9c;   /* --pax                  */
+  --color-primary-subtle: #99bd9c24; /* --pax-soft             */
+
+  /* ═══════════════════════════════════════════════════════════════════
+     Extended Matrix semantic tokens — use alongside Jamdesk defaults
+     ═══════════════════════════════════════════════════════════════════ */
+
+  /* Surfaces (tonal elevation ladder) */
+  --surface-base:         #161615;   /* --background           */
+  --surface-raised:       #1b1b19;   /* --card / --gray-900    */
+  --surface-overlay:      #222220;   /* --popover              */
+  --surface-hover:        #2a2a27;   /* --border / --gray-800  */
+  --surface-active:       #353530;   /* --gray-700             */
+
+  /* Text hierarchy */
+  --text-primary:         #e3d9d4;   /* --foreground           */
+  --text-secondary:       #dbd1cd;   /* --text-secondary       */
+  --text-tertiary:        #96918e;   /* --muted-foreground     */
+
+  /* Borders (weight ladder) */
+  --border-subtle:        #1b1b19;   /* --border-light         */
+  --border-default:       #2a2a27;   /* --border-medium        */
+  --border-strong:        #353530;   /* --border-medium-alt    */
+  --border-heavy:         #4a463f;   /* --border-heavy         */
+
+  /* Sidebar */
+  --sidebar-bg:           #1b1b19;   /* --sidebar              */
+  --sidebar-fg:           #e3d9d4;   /* --sidebar-foreground   */
+  --sidebar-accent:       #222220;   /* --sidebar-accent       */
+  --sidebar-border:       #2a2a27;   /* --sidebar-border       */
+
+  /* Semantic colors */
+  --color-success:        #99bd9c;   /* sage = success (reuse) */
+  --color-warning:        #fe9a00;   /* --text-warning amber   */
+  --color-destructive:    #ef4444;   /* --destructive          */
+
+  /* Static warm-neutral scale (for custom use) */
+  --stone-50:             #faf8f6;
+  --stone-100:            #f2efeb;
+  --stone-200:            #e3d9d4;
+  --stone-300:            #cbbfb8;
+  --stone-400:            #96918e;
+  --stone-500:            #6e6a62;
+  --stone-600:            #4a463f;
+  --stone-700:            #353530;
+  --stone-800:            #2a2a27;
+  --stone-900:            #1b1b19;
+  --stone-950:            #0a0a0a;
+
+  /* Green ramp (sage-tinted) */
+  --green-50:             #f0f4f0;
+  --green-100:            #dde7dd;
+  --green-200:            #c3d4c4;
+  --green-300:            #a9c1ab;
+  --green-400:            #99bd9c;   /* --pax anchor           */
+  --green-500:            #7fa382;
+  --green-600:            #6a8a6d;
+  --green-700:            #567056;
+  --green-800:            #445844;
+  --green-900:            #333f33;
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════════
+   Jamdesk dark-mode override (belt-and-suspenders — since Matrix is
+   dark-only this mirrors the :root values, but ensures Jamdesk's
+   data-theme selector picks them up if the toggle exists)
+   ═══════════════════════════════════════════════════════════════════════ */
+[data-theme="dark"] {
+  --color-background:     #161615;
+  --color-text:           #e3d9d4;
+  --color-text-muted:     #96918e;
+  --color-border:         #2a2a27;
+  --color-code-bg:        #1b1b19;
+  --color-primary:        #99bd9c;
+  --color-primary-subtle: #99bd9c24;
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════════
+   Typography overrides
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/* Headings — editorial serif for personality */
+.content h1,
+.content h2 {
+  font-family: 'Instrument Serif', Georgia, 'Times New Roman', serif;
+  font-weight: 400;
+  color: var(--text-primary);
+  letter-spacing: -0.02em;
+}
+
+.content h1 {
+  font-size: 2.5rem;
+  line-height: 1.15;
+  margin-bottom: 1rem;
+}
+
+.content h2 {
+  font-size: 1.75rem;
+  line-height: 1.3;
+  margin-top: 3rem;
+  margin-bottom: 1rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid var(--border-default);
+}
+
+.content h3 {
+  font-family: var(--font-family-sans);
+  font-size: 1.25rem;
+  font-weight: 600;
+  margin-top: 2rem;
+  margin-bottom: 0.75rem;
+  color: var(--text-primary);
+}
+
+.content h4 {
+  font-family: var(--font-family-sans);
+  font-size: 1rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-tertiary);
+  margin-top: 1.5rem;
+  margin-bottom: 0.5rem;
+}
+
+/* Body text */
+.content p,
+.content li {
+  font-family: var(--font-family-sans);
+  color: var(--text-secondary);
+  line-height: 1.7;
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════════
+   Links — sage accent
+   ═══════════════════════════════════════════════════════════════════════ */
+
+.content a:not([class]) {
+  color: var(--color-primary);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-color: #99bd9c44;
+  transition: text-decoration-color 0.15s ease;
+}
+
+.content a:not([class]):hover {
+  text-decoration-color: var(--color-primary);
+  text-decoration-thickness: 2px;
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════════
+   Code blocks — warm charcoal on raised surface
+   ═══════════════════════════════════════════════════════════════════════ */
+
+pre code,
+[data-component="code-block"] {
+  background: var(--surface-raised);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  font-family: var(--font-family-mono);
+  font-size: 0.875rem;
+  font-variant-ligatures: common-ligatures;
+}
+
+/* Inline code */
+.content code:not(pre code) {
+  background: var(--surface-overlay);
+  color: var(--color-primary);
+  padding: 0.15em 0.4em;
+  border-radius: var(--radius-sm);
+  font-size: 0.875em;
+  font-family: var(--font-family-mono);
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════════
+   Components
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/* Cards */
+[data-component="card"] {
+  background: var(--surface-raised);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+}
+
+[data-component="card"]:hover {
+  border-color: var(--border-default);
+}
+
+/* Tabs */
+[data-component="tabs"] [data-state="active"] {
+  border-bottom-width: 3px;
+  border-bottom-color: var(--color-primary);
+  color: var(--text-primary);
+}
+
+/* Callouts */
+[data-callout="note"] {
+  border-left-width: 4px;
+  border-left-color: var(--color-primary);
+  background: var(--color-primary-subtle);
+}
+
+[data-callout="warning"] {
+  border-left-color: var(--color-warning);
+  background: #fe9a0014;
+}
+
+[data-callout="danger"],
+[data-callout="error"] {
+  border-left-color: var(--color-destructive);
+  background: #ef444414;
+}
+
+/* Sidebar */
+nav.sidebar,
+[class*="sidebar"] {
+  background: var(--sidebar-bg);
+  border-right: 1px solid var(--sidebar-border);
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════════
+   Responsive
+   ═══════════════════════════════════════════════════════════════════════ */
+
+@media (max-width: 768px) {
+  .content h1 { font-size: 1.75rem; }
+  .content h2 { font-size: 1.35rem; }
+
+  :root {
+    --content-max-width: 100%;
+    --sidebar-width: 100%;
+  }
+}
