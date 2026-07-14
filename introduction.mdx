@@ -1,19 +1,29 @@
 ---
 title: Introduction
-description: "Matrix is an agent platform built by Paxlabs on Paxeer Network. It turns natural language into typed, inspectable, replayable agent execution, including on-chain operations."
+description: "Matrix is an agent framework that takes LLMs past chat and into real execution. Neo, the default agent, handles everyday work and escalates to rigorous pipelines when stakes are high."
 ---
 
-**Matrix** is an agent platform built by [Paxlabs](https://paxlabs.app) on [Paxeer Network](https://paxeer.app). It lets AI agents do real work: read and write files, browse the web, manage on-chain assets, deploy smart contracts, pay other agents, and schedule future actions, all driven by natural language.
+**Matrix** is an agent framework built by [Paxlabs](https://paxlabs.app). It takes a language model past chat and into real execution: files, code, web, on-chain operations, payments, smart contracts, all driven by natural language.
 
-Matrix is model-agnostic and harness-driven. The runtime controls the loop, manages memory, enforces policy, and dispatches tools. The LLM generates text and tool-call intents; the harness is the only effector. This separation is what makes agents reliable enough for production use.
+The default agent is **Neo**. Neo runs a recursive tool-calling loop with persistent memory, a full MCP tool surface, and the judgment to know when a task needs more rigor than a conversation can provide. Everyday reversible work stays in the Neo loop. The moment work becomes monetary, irreversible, or compliance-sensitive, Neo escalates to the MCL pipeline, where intents are compiled, typed, signed, and replayed.
+
+## Neo: where everything starts
+
+Neo is the entry point. You talk to Neo; Neo does the work.
+
+- **Recursive tool-calling loop.** The model emits text and tool-call intents. The harness dispatches tools (shell, code, web search, files, browser, chain reads, media) and feeds results back. Per-turn step budgets, stall detection, and honest partials on exhaustion. Never fabricated success.
+- **Persistent memory via Cortex.** Every actor gets an append-only, Merkle-anchored memory graph. Facts, preferences, goals, events, procedural patterns. Salience-ranked recall, semantic search via HNSW, byte-deterministic replay. Neo does not wake up empty.
+- **Agent Swarms.** Neo can spawn concurrent sub-agents for parallel work. Each sub-agent gets an isolated context window, a restricted tool surface, and a bounded timeout. No recursion, no fork-bombs.
+- **Automatrix.** Autonomous execution. Neo can schedule proactive tasks, wake on timers, and run background work on a restricted surface without value-moving tools.
+- **Tool transparency.** Every tool call is surfaced as a `ToolEvent` with its name, arguments, and result. Users see the real evidence behind an answer, not just a synthesized paragraph.
 
 ## Two rails, one substrate
 
-Matrix runs two execution rails over a shared memory and tool substrate. The conversational rail handles everyday reversible work. The rigorous rail handles anything monetary, irreversible, or compliance-sensitive.
+Matrix runs two execution rails over a shared memory and tool substrate.
 
 <Columns cols={2}>
   <Card title="Neo (conversational)" icon="comments">
-    A recursive LLM tool-calling loop with persistent memory. Permissive on reversible work: shell, code, web search, file operations. Delegates high-stakes work to the MCL rail automatically.
+    The default agent. Recursive tool-calling loop with persistent memory. Permissive on reversible work: shell, code, web search, file operations, browser, media. Delegates high-stakes work to the MCL rail automatically.
   </Card>
   <Card title="MCL (rigorous)" icon="diagram-project">
     Compiles natural language into a typed Intent IR, synthesizes a plan, and walks it deterministically. Every step is signed, journaled, and replayable. Used for on-chain transactions, irreversible operations, and monetary work.
@@ -36,24 +46,24 @@ Matrix runs two execution rails over a shared memory and tool substrate. The con
 
 | Layer | Role |
 | --- | --- |
-| **Neo** | Conversational agent. Recursive tool-calling loop with paged cortex memory, conversational recall, and writeback consolidation. |
+| **Neo** | The default agent. Recursive tool-calling loop with paged cortex memory, conversational recall, swarms, Automatrix, and writeback consolidation. |
 | **MCL** | Typed intent pipeline. Natural language to Intent IR via a seedable, grammar-constrained compiler written in MatrixScript. |
 | **Cortex** | Per-actor persistent memory. Pebble-backed typed memory graph with append-only journal, salience scoring, HNSW vector index, and Merkle-anchored snapshots. |
 | **Executor** | Plan walker. Lifecycle state machine, depth-first plan traversal with parallel branches and gates, MCP-backed tool dispatch, materiality classification. |
-| **LayerX** | Settlement fabric. Escrow-backed USDX balances, gasless agent-to-agent payments, sequencer-signed receipts, Merkle-batched settlement to Paxeer. |
+| **LayerX** | Settlement fabric. Escrow-backed USDX balances, gasless agent-to-agent payments, sequencer-signed receipts, Merkle-batched settlement to Paxeer chain. |
 | **Deus** | Service marketplace. Agent-service discovery, signed price quotes, metered invocation with LayerX payment, EIP-712 receipts. |
 | **Chronos** | Scheduler. Durable alarm scheduling with one-shot and cron support, timezone-aware wake delivery back into the agent loop. |
 | **Tachyon** | Smart contract engine. Solidity compilation, Forge testing, on-chain simulation, and deployment through the agent's embedded wallet. |
-| **Tools** | MCP tool ecosystem. Network operations (Paxeer RPC, explorer, markets), web search, media, filesystem, git, browser, and scaffold tools. |
+| **Tools** | MCP tool ecosystem. Chain operations (RPC, explorer, markets), web search, media, filesystem, git, browser, and scaffold tools. |
 
 ## Where to go next
 
 <Columns cols={2}>
   <Card title="Quickstart" icon="play" href="/quickstart">
-    Clone, build, configure, and run your first agent interaction.
+    Clone, build, configure, and run your first Neo interaction.
   </Card>
   <Card title="Core concepts" icon="lightbulb" href="/concepts">
-    The mental model: Neo, Cortex, MCL, Executor, LayerX, and the rest.
+    The mental model: Neo, Cortex, MCL, Executor, and the rest.
   </Card>
   <Card title="Architecture" icon="sitemap" href="/developer/architecture">
     Module boundaries, cross-cutting flows, and load-bearing invariants.
