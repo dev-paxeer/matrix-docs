@@ -3,12 +3,13 @@
   "name": "MatrixOS",
   "theme": "jam",
   "colors": {
-    "primary": "#004CED",
-    "light": "#FF7A45",
-    "dark": "#D44400"
+    "primary": "#353530",
+    "light": "#1b1b19",
+    "dark": "#99bd9c"
   },
   "appearance": {
-    "default": "dark"
+    "default": "dark",
+    "strict": false
   },
   "api": {
     "openapi": [
