@@ -29,7 +29,7 @@
       ]
     }
   },
-  "logo": "https://www.matrixmcl.com/matrix/logomatrix.png",
+  "logo": "logo/matrix-wordmark.png",
   "navbar": {
     "primary": {
       "type": "button",
