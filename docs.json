@@ -29,7 +29,6 @@
       ]
     }
   },
-  "logo": "logo/matrix-wordmark.png",
   "navbar": {
     "primary": {
       "type": "button",
@@ -305,5 +304,6 @@
   "favicon": "https://www.matrixmcl.com/matrix/logomatrix.png",
   "fonts": {
     "family": ""
-  }
+  },
+  "logo": "logo/matrix-wordmark.png"
 }
