@@ -1,9 +1,9 @@
 ---
 title: "Attest & Compact"
-description: "cortex.Attest records the outcome of a completed intent and feeds that outcome back into the salience of every memory the plan cited. cortex.Compact runs budget-aware context co..."
+description: "cortex.Attest records intent outcomes and feeds salience feedback via EMA weight learning. cortex.Compact runs budget-aware context compaction."
 ---
 
-`cortex.Attest` records the outcome of a completed intent and feeds that outcome back into the salience of every memory the plan cited. `cortex.Compact` runs budget-aware context compaction — summarizing non-load-bearing memories into short stubs and emitting a journal checkpoint for re-entry.
+`cortex.Attest` records the outcome of a completed intent and feeds that outcome back into the salience of every memory the plan cited, including EMA weight learning. `cortex.Compact` runs budget-aware context compaction, summarizing non-load-bearing memories into short stubs and emitting a journal checkpoint for re-entry.
 
 Source files: `cortex/attest.go`, `cortex/compact.go`.
 
@@ -14,10 +14,10 @@ Source files: `cortex/attest.go`, `cortex/compact.go`.
 ### What it does
 
 `Attest` is the cortex-side primitive the MCL `intent.attest` message kind triggers. It:
-1. Pre-resolves every cited URI to a live (non-tombstoned) Head.
+1. Pre-resolves every cited URI to a live (non-tombstoned) Head. Tombstoned/missing URIs are silently skipped (land in `SkippedURIs`).
 2. Applies salience bumps to every resolved memory.
 3. Recomputes the per-actor learned Weights via EMA.
-4. Commits both updates atomically — `KindAttest` at seq=N, `KindLearnWeights` at seq=N+1 — in a single Pebble batch.
+4. Commits both updates atomically - `KindAttest` at seq=N, `KindLearnWeights` at seq=N+1, in a single Pebble batch.
 
 ```go
 result, err := c.Attest(cortex.AttestOpts{
@@ -37,21 +37,19 @@ result, err := c.Attest(cortex.AttestOpts{
 | `AttestOutcomeFailure` | `factual_error` or `wrong_assumption` | -1 (floor 0) | 0 |
 | `AttestOutcomeFailure` | anything else | 0 | 0 |
 
-Even when the citation delta is 0, `LastUsed` is refreshed and `Cached` recomputed for every affected memory — an attest is treated as a touch.
-
 ### AttestOpts
 
 ```go
 type AttestOpts struct {
-    IntentID  string
-    Outcome   AttestOutcome
-    Reason    string         // free-form; only factual_error/wrong_assumption trigger -1
-    Cited     []memory.URI   // up to MaxCitedURIsPerAttest (256)
-    CreatedBy string
+    IntentID  string            // required; empty returns ErrAttestEmptyIntentID
+    Outcome   AttestOutcome     // AttestOutcomeSuccess or AttestOutcomeFailure
+    Reason    string            // free-form; only factual_error/wrong_assumption trigger -1
+    Cited     []memory.URI      // up to MaxCitedURIsPerAttest (256)
+    CreatedBy string            // agent ref for journal audit
 }
 ```
 
-`IntentID` is required — empty returns `ErrAttestEmptyIntentID`. An empty `Cited` list returns `ErrEmptyCitations`. The URI list is deduplicated before processing (same memory cited twice = one salience bump, not two).
+`IntentID` is required, empty returns `ErrAttestEmptyIntentID`. An empty `Cited` list returns `ErrEmptyCitations`. The URI list is deduplicated before processing (same memory cited twice = one salience bump, not two).
 
 ### AttestResult
 
@@ -60,10 +58,10 @@ type AttestResult struct {
     Seq            uint64          // KindAttest journal seq
     LearnSeq       uint64          // KindLearnWeights seq (always Seq+1)
     AffectedIDs    []memory.ID     // memories whose salience was bumped
-    SkippedURIs    []memory.URI    // tombstoned, missing, or malformed — not an error
+    SkippedURIs    []memory.URI    // tombstoned, missing, or malformed, not an error
     CitationsDelta int             // +1 / -1 / 0
-    PrevWeights    salience.Weights
-    NewWeights     salience.Weights
+    PrevWeights    salience.Weights  // weights before this attest
+    NewWeights     salience.Weights  // weights after EMA step
     WeightsUpdated bool            // false when EMA step was degenerate
 }
 ```
@@ -71,14 +69,14 @@ type AttestResult struct {
 ### The two-journal-entry batch
 
 `Attest` commits two journal entries in a single atomic `WriteBatch`:
-- **`KindAttest`** at seq=N: contains the post-skip affected IDs, outcome, and reason. The replay harness uses this to re-apply salience bumps deterministically.
-- **`KindLearnWeights`** at seq=N+1: contains the before/after weight vector, the EMA alpha, and whether the step was skipped. The replay harness uses this to re-apply the EMA step.
+- **`KindAttest`** at seq=N: contains the post-skip affected IDs (`CitedIDs[]`), outcome, and reason. The replay harness uses this to re-apply salience bumps deterministically.
+- **`KindLearnWeights`** at seq=N+1: contains the before/after weight vector (`NewWR/WA/WC/WD/WV`), the EMA alpha, and whether the step was skipped. The replay harness uses this to re-apply the EMA step.
 
 The seq-pairing invariant (`KindAttest` immediately followed by `KindLearnWeights`) is unconditional. Even when the EMA step is a no-op (empty post-skip cited set, or all-zero factor profile), `KindLearnWeights` is still emitted with `Skipped=true` and `NewW* == PrevW*`.
 
 ### Rate limiting
 
-`Attest` is protected by a per-(actor, intent_id) token bucket (1/sec, burst 5) to bound the Pebble-sync + dual-journal-entry cost from a malicious sub-agent. Over-rate calls return `ErrAttestRateLimited` without any side effects.
+`Attest` is protected by a per-(actor, intent_id) token bucket (1/sec, burst 5) to bound the Pebble-sync + dual-journal-entry cost from a malicious sub-agent. Over-rate calls return `ErrAttestRateLimited` without any side effects (no journal entries, no salience bumps, no EMA step).
 
 ---
 
@@ -101,14 +99,7 @@ result, err := c.Compact(cortex.CompactOpts{
 
 ### Load-bearing classification
 
-Cortex auto-protects pinned items (Identity, hard Constraints, active Goals) present in `InContext`, in addition to the caller's explicit `LoadBearing` URI list. The full Kept set = caller-listed URIs ∪ cortex-auto-pinned URIs.
-
-```go
-// Caller-explicit
-LoadBearing: []memory.URI{uriFact1, uriPattern2}
-
-// Auto-protected (cortex-side) — any Identity, Constraint{Hard}, Goal{Active} in InContext
-```
+Cortex auto-protects pinned items (Identity, hard Constraints, active Goals) present in `InContext`, in addition to the caller's explicit `LoadBearing` URI list. The full Kept set = caller-listed URIs union cortex-auto-pinned URIs.
 
 ### CompactResult
 
@@ -122,8 +113,8 @@ type CompactResult struct {
 
 type CompactedItem struct {
     Ref       memory.URI
-    ShortForm string    // Version.Forms.Short — ≤50 tokens
-    Salience  float32
+    ShortForm string    // Version.Forms.Short - <=50 tokens
+    Salience  float32   // from salience cache at compaction time; NOT bumped
 }
 ```
 
@@ -135,7 +126,7 @@ Kept items count at medium form tokens; compacted stubs count at short form toke
 total = sum(CountTokens(medium)) over Kept + sum(CountTokens(short)) over Compacted
 ```
 
-If `total > BudgetTokens` after full summarization, `Compact` returns `ErrBudgetUnreachable` — no stage-2 drop, no truncation. "Summarize-and-link, never truncate." The caller must shed some `InContext` items before retrying.
+If `total > BudgetTokens` after full summarization, `Compact` returns `ErrBudgetUnreachable` - no stage-2 drop, no truncation. "Summarize-and-link, never truncate." The caller must shed some `InContext` items before retrying.
 
 ### CheckpointRecord
 
@@ -153,7 +144,16 @@ type CheckpointRecord struct {
 }
 ```
 
-The Pebble commit is canonical. The filesystem mirror is best-effort — a failed mirror write does NOT roll back the Pebble commit. `SnapshotPath` is empty when the mirror write fails.
+The Pebble commit is canonical. The filesystem mirror is best-effort, a failed mirror write does NOT roll back the Pebble commit. `SnapshotPath` is empty when the mirror write fails.
+
+### Checkpoint URI
+
+```go
+uri := cortex.BuildCheckpointURI(intentID, stepID)
+// -> "matrix://journal/logs/<intent_id>/<step_id>"
+```
+
+Kind = "logs", matching research/01 §4.10 workspace taxonomy.
 
 ### Loading a checkpoint
 
@@ -166,7 +166,11 @@ Used by the re-entry path to rebuild context from the last checkpoint without re
 
 ### Compact is a pure read (for salience)
 
-`Compact` reads salience scores but does NOT bump them. Compact is not listed in the spec's exhaustive list of salience triggers — calling it repeatedly is a no-op from a salience perspective.
+`Compact` reads salience scores but does NOT bump them. Compact is not listed in the spec's exhaustive list of salience triggers. Calling it repeatedly is a no-op from a salience perspective.
+
+### Latency target
+
+p50 < 100 ms, ceiling < 400 ms. All reads are point reads on `m/`, `mv/`, `salience/`; no vector / no traversal / no idx scan.
 
 ---
 
@@ -189,10 +193,10 @@ Used by the re-entry path to rebuild context from the last checkpoint without re
 
 | What to change | Where |
 |---|---|
-| Salience delta rules | `cortex/attest.go` — `citationsDelta` |
-| EMA learning rate | `cortex/salience/salience.go` — `EMARate` (also stamped in journal for replay) |
-| Attest rate limit | `cortex/ratelimit.go` — `DefaultRateLimits().Attest` / `AttestBurst` |
-| Compact Pinned auto-protect criteria | `cortex/compact.go` — `isPinnedInCompact` |
-| Checkpoint URI scheme | `cortex/compact.go` — `BuildCheckpointURI` |
-| Checkpoint file path scheme | `cortex/compact.go` — `BuildCheckpointFilePath` |
-| Budget accounting per tier | `cortex/compact.go` — token counting in step 5 |
+| Salience delta rules | `cortex/attest.go` - `citationsDelta` |
+| EMA learning rate | `cortex/salience/salience.go` - `EMARate` (also stamped in journal for replay) |
+| Attest rate limit | `cortex/ratelimit.go` - `DefaultRateLimits().Attest` / `AttestBurst` |
+| Compact Pinned auto-protect criteria | `cortex/compact.go` - `isPinnedInCompact` |
+| Checkpoint URI scheme | `cortex/compact.go` - `BuildCheckpointURI` |
+| Checkpoint file path scheme | `cortex/compact.go` - `BuildCheckpointFilePath` |
+| Budget accounting per tier | `cortex/compact.go` - token counting in step 5 |

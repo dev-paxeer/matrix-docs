@@ -1,17 +1,15 @@
 ---
 title: "Types"
-description: "The pkg/types package defines the shared request/response types used by all transport layers (REST, JSON-RPC, MCP). It is the API contract between the engine and the outside world."
+description: "Shared request/response types, generic envelopes, error taxonomy, chain profiles, and artifact definitions used across REST, JSON-RPC, and MCP transports."
 ---
 
-**Source files:** `pkg/types/types.go`, `pkg/types/compile.go`, `pkg/types/deploy.go`, `pkg/types/call.go`, `pkg/types/simulate.go`, `pkg/types/test.go`, `pkg/types/chain.go`, `pkg/types/artifact.go`, `pkg/types/errors.go`
+**Source files:** `pkg/types/*.go`
 
-The `pkg/types` package defines the shared request/response types used by all transport layers (REST, JSON-RPC, MCP). It is the API contract between the engine and the outside world.
+The `types` package holds the shared wire contracts for all tachyon transports. Every request and response type, the generic envelope, the error taxonomy, chain profiles, and artifact definitions live here.
 
 ---
 
-## Design decisions
-
-### Generic envelope
+## Envelope
 
 ```go
 type Envelope[T any] struct {
@@ -21,66 +19,128 @@ type Envelope[T any] struct {
 }
 ```
 
-The generic envelope is the only response shape. It is used by REST, JSON-RPC, and MCP. The `Data` field is omitted when empty; the `Error` field is omitted on success.
+Constructors: `types.OK(data)` and `types.Fail(err)`. Used by all three transports (REST, JSON-RPC, MCP).
 
-### Machine-stable error codes
-
-```go
-const (
-    CodeCompilerForgeFailed = "COMPILER_FORGE_FAILED"
-    CodeCompilerSolcFailed  = "COMPILER_SOLC_FAILED"
-    CodeTestForgeFailed     = "TEST_FORGE_FAILED"
-    CodeTestAssertionFailed = "TEST_ASSERTION_FAILED"
-    CodeChainNotFound       = "CHAIN_NOT_FOUND"
-    CodeChainRPCFailed      = "CHAIN_RPC_FAILED"
-    CodeSimulateFailed      = "SIMULATE_FAILED"
-    CodeDeployFailed        = "DEPLOY_FAILED"
-    CodeDeployIdempotent    = "DEPLOY_IDEMPOTENT_HIT"
-    CodeCallFailed          = "CALL_FAILED"
-    CodeArtifactNotFound    = "ARTIFACT_NOT_FOUND"
-    CodeRegistryNotFound    = "REGISTRY_NOT_FOUND"
-    CodeWalletDenied        = "WALLET_POLICY_DENIED"
-    CodeWalletNotConfigured = "WALLET_NOT_CONFIGURED"
-    CodeInvalidRequest      = "INVALID_REQUEST"
-    CodeInternal            = "INTERNAL_ERROR"
-)
-```
-
-Every error carries a `retry` boolean. Agents use this for automatic retry logic without parsing human-readable messages.
-
-### Constructor helpers
+## Error
 
 ```go
-func OK[T any](data T) Envelope[T]
-func Fail[T any](err *Error) Envelope[T]
-func NewError(code, message string, retry bool, details any) *Error
+type Error struct {
+    Code    string `json:"code"`
+    Message string `json:"message"`
+    Retry   bool   `json:"retry"`
+    Details any    `json:"details,omitempty"`
+}
 ```
 
-These are the only ways to construct envelopes and errors. They ensure consistency across all engine methods.
+`Error` implements the `error` interface. `NewError(code, message, retry, details)` is the constructor.
 
-### Separate files per domain
+## Stable error codes
 
-Types are organized by domain:
-
-| File | Types |
-|---|---|
-| `types.go` | `Envelope[T]`, `Error`, `HealthData` |
-| `compile.go` | `CompileRequest`, `CompileResponse`, `Artifact`, `CompilerSettings` |
-| `deploy.go` | `DeployRequest`, `DeployResponse`, `Create2Config` |
-| `call.go` | `CallRequest`, `CallResponse` |
-| `simulate.go` | `SimulateRequest`, `SimulateResponse` |
-| `test.go` | `TestRequest`, `TestResponse`, `TestCaseResult`, `TestSuiteResult` |
-| `chain.go` | `ChainProfile`, `ChainListResponse`, `ChainRegisterRequest`, `ChainUseRequest` |
-| `artifact.go` | `ArtifactGetRequest`, `ArtifactGetResponse`, `RegistryLookupRequest`, `RegistryLookupResponse` |
-| `errors.go` | Error codes, constructors |
+| Code | Retry | When |
+|---|---|---|
+| `COMPILER_FORGE_FAILED` | yes | forge build subprocess failed |
+| `COMPILER_SOLC_FAILED` | yes | solc mismatch or compile error |
+| `TEST_FORGE_FAILED` | yes | forge test subprocess failed |
+| `TEST_ASSERTION_FAILED` | no | one or more tests failed |
+| `CHAIN_NOT_FOUND` | no | unknown chain_id |
+| `CHAIN_RPC_FAILED` | yes | RPC dial or transport error |
+| `SIMULATE_FAILED` | no | eth_call reverted |
+| `DEPLOY_FAILED` | varies | deployment planning or broadcast failed |
+| `DEPLOY_IDEMPOTENT_HIT` | no | (reserved) |
+| `CALL_FAILED` | yes | broadcast call failed |
+| `ARTIFACT_NOT_FOUND` | no | compile first or wrong project_id |
+| `REGISTRY_NOT_FOUND` | no | (reserved) |
+| `WALLET_POLICY_DENIED` | no | spend cap or allow-list rejected |
+| `WALLET_NOT_CONFIGURED` | no | no signer configured |
+| `INVALID_REQUEST` | no | malformed input |
+| `INTERNAL_ERROR` | varies | unexpected server error |
 
 ---
 
-## Modifying types
+## HealthData
 
-| What to change | Where |
+```go
+type HealthData struct {
+    Version string   `json:"version"`
+    Forge   string   `json:"forge,omitempty"`
+    Chains  []string `json:"chains"`
+    Project string   `json:"project_root"`
+}
+```
+
+---
+
+## Compile types
+
+| Type | Purpose |
 |---|---|
-| Add request/response field | Domain file (e.g., `deploy.go`) |
-| Add error code | `errors.go` — add constant + update docs |
-| Change envelope shape | `types.go` — update all transports |
-| Add new domain | New file `pkg/types/<domain>.go` |
+| `CompileRequest` | `project_root`, `project_id`, `sources`, `targets`, `optimize`, `via_ir`, `evm_version` |
+| `CompileResponse` | `project_id`, `artifacts[]`, `warnings[]` |
+| `Artifact` | `name`, `path`, `abi`, `bytecode`, `deployedBytecode`, `compiler` |
+| `CompilerSettings` | `version`, `optimizer` |
+| `OptimizerConfig` | `enabled`, `runs` |
+
+`CompileRequest.Sources` (map of path to content) makes the request self-contained. `EVMVersion` pins the solc target (default: `"shanghai"`).
+
+---
+
+## Test types
+
+| Type | Purpose |
+|---|---|
+| `TestRequest` | `project_root`, `sources`, `match_path`, `match_contract`, `filter`, `evm_version` |
+| `TestResponse` | `suites[]`, `passed`, `failed` |
+| `TestSuiteResult` | `file`, `passed`, `failed`, `skipped`, `cases[]` |
+| `TestCaseResult` | `name`, `status`, `reason`, `gas`, `duration` |
+
+---
+
+## Simulate types
+
+| Type | Purpose |
+|---|---|
+| `SimulateRequest` | `chain_id`, `rpc_url`, `from`, `to`, `data`, `value`, `block`, `trace` |
+| `SimulateResponse` | `result`, `gas_estimate`, `revert`, `trace` |
+
+---
+
+## Deploy types
+
+| Type | Purpose |
+|---|---|
+| `DeployRequest` | `intent`, `idempotency_key`, `chain_id`, `project_id`, `contract`, `constructor_args`, `create2`, `from`, `capability_token`, `spend_cap_wei`, `wallet_token` |
+| `DeployResponse` | `address`, `tx_hash`, `idempotency_key`, `chain_id`, `contract`, `existing` |
+| `Create2Config` | `salt`, `deployer` |
+
+---
+
+## Call types
+
+| Type | Purpose |
+|---|---|
+| `CallRequest` | `chain_id`, `rpc_url`, `from`, `to`, `data`, `method`, `args`, `abi`, `contract`, `project_id`, `value`, `simulate_only`, `capability_token`, `spend_cap_wei`, `wallet_token` |
+| `CallResponse` | `result`, `tx_hash`, `revert` |
+
+Calldata is resolved two ways: `Method` + `Args` (ABI-encoded, with ABI from inline or registry) or pre-encoded hex `Data`.
+
+---
+
+## Chain types
+
+| Type | Purpose |
+|---|---|
+| `ChainProfile` | `id`, `name`, `rpc_url`, `rpc_url_env`, `chain_id`, `preset`, `explorer`, `features`, `active` |
+| `ChainListResponse` | `chains[]`, `active_chain_id` |
+| `ChainRegisterRequest` | `id`, `name`, `rpc_url`, `chain_id`, `preset`, `explorer` |
+| `ChainUseRequest` | `chain_id` |
+
+---
+
+## Artifact/Registry types
+
+| Type | Purpose |
+|---|---|
+| `ArtifactGetRequest` | `project_id`, `name` |
+| `ArtifactGetResponse` | `artifact` |
+| `RegistryLookupRequest` | `idempotency_key`, `chain_id` |
+| `RegistryLookupResponse` | `found`, `address`, `tx_hash`, `contract`, `confirmed` |

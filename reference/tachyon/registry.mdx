@@ -1,38 +1,44 @@
 ---
 title: "Registry"
-description: "The registry is a JSON-file-backed index of compiled artifacts and on-chain deployments. It provides durable, cross-session storage so that a compile today can be referenced by..."
+description: "The registry is a JSON-file backed index of compiled artifacts and confirmed deployments. It provides mutex-protected, atomic read/write access to the daemon's local state."
 ---
 
 **Source file:** `internal/registry/registry.go`
 
-The registry is a JSON-file-backed index of compiled artifacts and on-chain deployments. It provides durable, cross-session storage so that a compile today can be referenced by a deploy tomorrow, and an idempotent deploy yesterday can be looked up today.
+The registry is a JSON-file backed index of compiled artifacts and confirmed deployments. It provides mutex-protected, atomic read/write access to the daemon's local state.
 
 ---
 
 ## Design decisions
 
-### JSON file store, not a database
+### JSON file backend
 
-The registry uses a single JSON file (`registry.json` by default) with a simple in-memory map + mutex pattern. This avoids database dependencies, keeps the daemon self-contained, and makes the registry human-readable and git-friendly. The tradeoff is no concurrent access across multiple daemon instances.
+The registry persists to a single JSON file (default: `registry.json` in the project root). On startup, `Open(path)` loads the file or creates it if absent. Every write atomically marshals the full state and overwrites the file. This is simple and crash-safe for the single-daemon use case.
 
-### Atomic writes
+```go
+type fileStore struct {
+    Artifacts   map[string]ArtifactRecord   `json:"artifacts"`
+    Deployments map[string]DeploymentRecord `json:"deployments"`
+    ActiveChain string                      `json:"active_chain_id,omitempty"`
+}
+```
 
-Every mutating operation (`PutArtifact`, `PutDeployment`, `SetActiveChain`) acquires a write lock, marshals the entire store to JSON, and writes it to disk. The read lock is held only during marshaling. This is simple and correct for a single-process daemon.
+### Mutex-protected access
 
-### Key schemes
+All reads acquire `RLock`, all writes acquire `Lock`. The `save()` method acquires `RLock` for marshaling (the data snapshot) then writes to disk. This keeps concurrent API handlers safe.
 
-Artifacts: `projectID:name` → `ArtifactRecord`
-Deployments: `idempotencyKey:chainID` → `DeploymentRecord`
+### Flat key space
 
-These flat key spaces are collision-free and easy to debug.
+- Artifacts: `projectID:contractName` (e.g., `a1b2c3d4e5f6g7h8:MyToken`)
+- Deployments: `idempotencyKey:chainID` (e.g., `deploy-v1:125`)
 
-### Types conversion
-
-The registry stores raw JSON for compiler metadata (`json.RawMessage`) and provides `ToTypesArtifact` to convert to the public `types.Artifact` shape. This decouples the storage schema from the API schema.
+Both use simple string concatenation with `:` as separator.
 
 ---
 
-## Data structures
+## Data types
+
+### ArtifactRecord
 
 ```go
 type ArtifactRecord struct {
@@ -45,7 +51,11 @@ type ArtifactRecord struct {
     Compiler         json.RawMessage `json:"compiler,omitempty"`
     UpdatedAt        string          `json:"updated_at,omitempty"`
 }
+```
 
+### DeploymentRecord
+
+```go
 type DeploymentRecord struct {
     IdempotencyKey string `json:"idempotency_key"`
     ChainID        string `json:"chain_id"`
@@ -59,18 +69,21 @@ type DeploymentRecord struct {
 
 ---
 
-## Registry operations
+## Operations
 
-```go
-func Open(path string) (*Registry, error)
-func (r *Registry) PutArtifact(rec ArtifactRecord) error
-func (r *Registry) GetArtifact(projectID, name string) (ArtifactRecord, bool)
-func (r *Registry) ListArtifacts(projectID string) []ArtifactRecord
-func (r *Registry) PutDeployment(rec DeploymentRecord) error
-func (r *Registry) GetDeployment(idempotencyKey, chainID string) (DeploymentRecord, bool)
-func (r *Registry) ActiveChainID() string
-func (r *Registry) SetActiveChain(chainID string) error
-```
+| Method | Description |
+|---|---|
+| `PutArtifact(rec)` | Index a compiled contract (overwrites if key exists) |
+| `GetArtifact(projectID, name)` | Fetch by project and contract name |
+| `ListArtifacts(projectID)` | List all artifacts for a project (or all if empty) |
+| `PutDeployment(rec)` | Store a deployment record |
+| `GetDeployment(idempotencyKey, chainID)` | Look up by idempotency key and chain |
+| `ActiveChainID()` | Return the selected chain profile id |
+| `SetActiveChain(chainID)` | Store the active chain id |
+
+### API conversion
+
+`ToTypesArtifact(rec ArtifactRecord) types.Artifact` converts a registry record to the API type, deserializing the `Compiler` JSON field into `*types.CompilerSettings`.
 
 ---
 
@@ -78,7 +91,7 @@ func (r *Registry) SetActiveChain(chainID string) error
 
 | What to change | Where |
 |---|---|
-| Add index field | `internal/registry/registry.go` — add to `ArtifactRecord`/`DeploymentRecord` |
-| Add query method | `internal/registry/registry.go` — new getter |
-| Change storage backend | Replace `fileStore` with SQLite/BoltDB |
-| Add versioning | `internal/registry/registry.go` — add schema version field |
+| Add artifact field | `internal/registry/registry.go` - `ArtifactRecord` + `ToTypesArtifact` |
+| Add deployment field | `internal/registry/registry.go` - `DeploymentRecord` |
+| Change storage backend | Replace `fileStore` with Postgres/SQLite implementation |
+| Add listing API | `internal/registry/registry.go` - `ListDeployments` |

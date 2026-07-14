@@ -1,9 +1,9 @@
 ---
 title: "Conversational Recall Lane"
-description: "Package matrix/neo/internal/recall is Neo's conversational recall lane: the read-side that surfaces the most RELEVANT past turns of a (now unbounded) conversation thread — reach..."
+description: "Package matrix/neo/internal/recall is Neo's conversational recall lane: the read-side that surfaces the most relevant past turns of an unbounded conversation thread by semantic similarity."
 ---
 
-Package `matrix/neo/internal/recall` is Neo's conversational recall lane: the read-side that surfaces the most RELEVANT past turns of a (now unbounded) conversation thread — reaching PAST what the live working transcript and the resume seed already hold.
+Package `matrix/neo/internal/recall` is Neo's conversational recall lane: the read-side that surfaces the most RELEVANT past turns of a (now unbounded) conversation thread, reaching PAST what the live working transcript and the resume seed already hold.
 
 Source file: `neo/internal/recall/recall.go`.
 
@@ -13,9 +13,9 @@ Source file: `neo/internal/recall/recall.go`.
 
 **Relevance over raw recency.** The live transcript (RAM) and the 16-turn resume seed cover RECENT context. Once a turn scrolls out of RAM or is compacted into the lossy summary, the verbatim original is unreachable. This lane pulls a specific, relevant OLD turn back by semantic similarity.
 
-**In-memory, lazy, incremental.** Turns are embedded + cosine-ranked in memory, recomputed lazily from the durable conversation store on demand. Only turns appended since the last call are embedded, so steady-state cost is one embed per new turn.
+**In-memory, lazy, incremental.** Turns are embedded and cosine-ranked in memory, recomputed lazily from the durable conversation store on demand. Only turns appended since the last call are embedded, so steady-state cost is one embed per new turn.
 
-**Disposable index.** The index never touches cortex or the replay chain. It is a derivable, disposable side-channel — preserving the conversation side-channel invariant.
+**Disposable index.** The index never touches cortex or the replay chain. It is a derivable, disposable side-channel, preserving the conversation side-channel invariant.
 
 **Best-effort degradation.** Any embed failure degrades to fewer/no hits rather than erroring. The RAM tier + recent tail still carry the turn.
 
@@ -29,7 +29,7 @@ type Recaller struct {
     convID string
     emb    embed.Embedder
     topK   int
-    budget int // token ceiling
+    budget int // token ceiling (bytes/4 heuristic)
 
     mu       sync.Mutex
     cache    []turnVec // embedded turns, thread order
@@ -41,7 +41,7 @@ type Recaller struct {
 recaller := recall.New(conv, convID, embedder, topK, budgetTokens)
 ```
 
-A nil embedder or disabled store yields a safe no-op recaller (`Relevant` returns nil).
+A nil embedder or disabled store yields a safe no-op recaller (`Relevant` returns nil). The recaller is session-scoped (one per conversation) and serialized by a mutex, so the opening fault and the mid-turn refault never race the embedding cache.
 
 ---
 
@@ -60,17 +60,19 @@ type Hit struct {
 }
 ```
 
+High-entropy tokens are never paraphrased in the recalled text, the trust contract.
+
 ### Algorithm
 
-1. **Refresh** — embed any turns appended since the last call
-2. **Embed query** — `emb.Embed(queryText)`
-3. **Score all turns** — cosine similarity between query vector and each turn vector
-4. **Sort** — descending by score
-5. **Budget** — accumulate turns until `topK` or token budget exhausted (always returns ≥1 if any exist)
+1. **Refresh** - embed any turns appended since the last call (incremental, one embed per new turn)
+2. **Embed query** - `emb.Embed(queryText)`
+3. **Score all turns** - cosine similarity between query vector and each turn vector
+4. **Sort** - descending by score
+5. **Budget** - accumulate turns until `topK` or token budget exhausted (always returns at least 1 if any exist)
 
 ### Deduplication
 
-The caller (agent) is expected to drop any hit already present in the live transcript. This lives at the agent boundary because the recaller doesn't know what's currently in the working window.
+The caller (agent) is expected to drop any hit already present in the live transcript. This lives at the agent boundary because the recaller does not know what is currently in the working window.
 
 ---
 
@@ -95,7 +97,7 @@ s.agent = agent.New(agent.Options{
 The agent injects recalled turns into the system block via `renderRecall()`, deduped against the live transcript:
 
 ```
-Relevant earlier in this conversation (the live exchange below is more current — it wins on any conflict):
+Relevant earlier in this conversation (the live exchange below is more current, it wins on any conflict):
 - User: how do I deploy an ERC-20
 - Neo: call paxeer-net deploy_token...
 ```
@@ -106,7 +108,7 @@ Relevant earlier in this conversation (the live exchange below is more current �
 
 | What to change | Where |
 |---|---|
-| Default topK | `recall/recall.go` — constructor default |
-| Default budget | `recall/recall.go` — constructor default |
-| Similarity metric | `recall/recall.go` — `embed.Cosine()` |
-| Budget heuristic | `recall/recall.go` — `(len(text) + 3) / 4` |
+| Default topK | `config/config.go` - `RecallTopK` (default 6) |
+| Default budget | `config/config.go` - `RecallBudgetTokens` (default 2500) |
+| Similarity metric | `recall/recall.go` - `embed.Cosine()` |
+| Budget heuristic | `recall/recall.go` - `(len(text) + 3) / 4` |

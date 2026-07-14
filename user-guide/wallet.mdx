@@ -1,31 +1,112 @@
 ---
-title: Wallet & PAX
-description: "How paid work is metered — PAX as the usage unit, the credit ledger, the free tier, agent balances on LayerX, and spend caps that keep on-chain work safe."
+title: Wallet & On-Chain Actions
+description: "How the embedded wallet works, what on-chain actions Neo can perform, LayerX for agent payments, and the spend safety layers that protect your funds."
 ---
 
-Matrix meters paid work transparently. The unit is **PAX** (the Paxeer Network unit), and every metered call is priced and recorded so you can audit exactly what you spent.
+Matrix gives every agent a built-in wallet that can read and write on the Paxeer chain. You do not need to install a browser extension or manage private keys yourself. The wallet is embedded at the network layer, with custody and key material handled by the Paxeer Embedded Wallet service.
 
-## How metering works
+## Your agent wallet
 
-- **LLM usage** flows through the gateway, which prices each call against a versioned rate card and debits your **credit ledger** in PAX.
-- **Auditable rows.** Every ledger row records the rate-card version that priced it, so historical costs stay reproducible even after prices change.
-- **Free tier.** A per-day PAX allowance covers a whitelist of default models. Beyond that you bring your own provider key or top up.
+When you first interact with the chain, Neo provisions an embedded wallet for your agent. This wallet:
 
-## Agent balances and payments
+- Has a Paxeer address that can receive and send PAX and ERC-20 tokens.
+- Signs transactions server-side; private keys never touch agent code.
+- Is governed by a spend policy (`PaxeerSpendPolicy`) enforced at the wallet layer, not trusted to the agent.
 
-For agent-to-agent and marketplace work, **LayerX** holds balances and moves value: you can deposit, pay a service, fetch a signed receipt, withdraw, and settle. Balances distinguish **available** vs **reserved** funds so in-flight obligations can't be double-spent.
+You can check your wallet at any time:
 
-## Spend safety on chain
+> **you:** What's my wallet address?
+>
+> *Neo calls `wallet_info` and returns your embedded wallet address and chain details.*
+
+## What Neo can read
+
+Neo has full read access to the Paxeer chain and its ecosystem of services:
+
+| Capability | What it does |
+|---|---|
+| **Balances** | Native PAX and ERC-20 token balances for any address |
+| **Transactions** | Transaction history, details, and receipt data via PaxScan |
+| **Token data** | Token metadata, top holders, trending tokens, and prices |
+| **Portfolio** | PnL, rank, and performance tracking via the Argus indexer |
+| **Contracts** | Read-only `eth_call` against any contract, with ABI-encoded method calls |
+| **Chain state** | Chain ID, head block, sync status, and network statistics |
+| **Oracles** | Validator prices, oracle-relative prices, and clearing computations |
+| **Streams and jobs** | Payment stream status and scheduled job details |
+
+All read operations are free and require no wallet authorization.
+
+## What Neo can write
+
+When you ask Neo to perform an on-chain action, it escalates to the rigorous MCL pipeline, which produces a typed plan for your review. Once approved, Neo signs and broadcasts the transaction through the embedded wallet.
+
+Supported write operations:
+
+| Action | Description |
+|---|---|
+| **Transfer** | Send native PAX or any ERC-20 token to an address |
+| **Approve** | Authorize a spender contract to move your tokens |
+| **Contract write** | Interact with any smart contract: DEX swaps, vault deposits, protocol calls |
+| **Payment streams** | Open, settle, close, or update the rate of a continuous payment stream |
+| **Scheduled jobs** | Schedule a transaction for a future block, cancel, or reschedule it |
+| **Staking** | Delegate, undelegate, or redelegate PAX to validators |
+| **Message signing** | Sign an EIP-191 message for identity proof or off-chain verification |
 
 <Warning>
-Chain writes are gated twice: a per-call spend ceiling (`PAXEER_SPEND_CAP_WEI`) is enforced at plan time before any side effect, and the Paxeer Embedded Wallet enforces its own spend policy at signing time. Without wallet auth, chain access is read-only.
+Every write operation is gated twice. First, a per-call spend ceiling is enforced at plan time before any side effect. Second, the Paxeer Embedded Wallet enforces its own spend policy at signing time. Without wallet authorization, chain access is read-only.
 </Warning>
+
+## LayerX: agent-to-agent payments
+
+**LayerX** is a settlement layer for instant, gasless agent-to-agent payments. It holds USD-denominated balances (USDX) that are escrow-backed and spendable across the agent economy.
+
+### How it works
+
+<Steps>
+  <Step title="Fund your balance">
+    Deposit USDL (the Paxeer stablecoin) into LayerX via the vault contract. Neo handles the approve-and-deposit flow for you, including the claim credential that credits your balance.
+  </Step>
+  <Step title="Pay other agents">
+    Send USDX to another agent by their DID (decentralized identifier). Payments are instant and gasless; the sequencer signs a receipt on the spot.
+  </Step>
+  <Step title="Verify receipts">
+    Every payment produces a signed inclusion receipt with a Merkle proof and the Paxeer anchor transaction. Receipts are publicly verifiable.
+  </Step>
+  <Step title="Withdraw when ready">
+    Burn USDX to release real USDL from the vault to your mapped Paxeer payout address. Optionally swap to another asset on the way out.
+  </Step>
+</Steps>
+
+### LayerX tools
+
+| Tool | Description |
+|---|---|
+| `layerx_balance` | Check your spendable USDX balance, escrow-bound funds, and mapped payout address |
+| `layerx_deposit` | Get the deposit parameters (vault address, claim credential) to fund your balance |
+| `layerx_pay` | Pay another agent instantly by DID |
+| `layerx_receipt` | Fetch the signed inclusion receipt for a payment |
+| `layerx_withdraw` | Burn USDX and withdraw real assets to your Paxeer wallet |
+| `layerx_settle` | Force-settle the current window and anchor the Merkle root to Paxeer immediately |
+
+### Durable actions
+
+Some wallet operations (LayerX deposits, approve-then-call sequences) are handled as **durable actions**: they are executed across multiple on-chain steps, confirmed server-side, and are idempotent. If a step fails or the process restarts, the action resumes from where it left off rather than starting over or double-executing.
+
+Each durable action returns an `action_id` that you can poll for status, transaction hashes, and error details.
+
+## PAX: the usage unit
+
+**PAX** is the Paxeer Network unit that Matrix uses to price LLM usage in the credit ledger. Every metered model call is priced against a versioned rate card and debited from your PAX balance.
+
+- **Auditable.** Every ledger row records the rate-card version that priced it, so historical costs stay reproducible even after rate changes.
+- **Free tier.** A per-day PAX allowance covers a whitelist of default models. Beyond that, you bring your own provider key or top up your balance.
+- **Agent economy.** PAX is also the unit used for on-chain transactions, staking, and LayerX deposits on the Paxeer chain.
 
 <Columns cols={2}>
   <Card title="Billing FAQ" icon="circle-question" href="/faq/billing-pax">
     Common questions about PAX, pricing, and the free tier.
   </Card>
-  <Card title="Deus marketplace" icon="store" href="/api-reference/deus">
-    Discover and pay for agent services.
+  <Card title="Chatting with Neo" icon="comments" href="/user-guide/chat">
+    How everyday conversation and tool use works.
   </Card>
 </Columns>

@@ -1,9 +1,9 @@
 ---
 title: "Tool Surface"
-description: "Package matrix/neo/internal/tools is Neo's tool surface. It reuses the executor's MCP manager + tool registry so Neo's tools are byte-identical to the daemon's (fs, web_search,..."
+description: "Package matrix/neo/internal/tools is Neo's tool surface. It reuses the executor's MCP manager, classifies tools as Natural or Escalate, dispatches calls, and manages synthetic tools including core_execute, memory_recall, spawn_subagents, write_skill, todo, and workspace_preview."
 ---
 
-Package `matrix/neo/internal/tools` is Neo's tool surface. It reuses the executor's MCP manager + tool registry so Neo's tools are byte-identical to the daemon's (fs, web_search, browser, git, shell, fetch, …), advertises each tool's real JSON schema to the model as a function, and dispatches calls.
+Package `matrix/neo/internal/tools` is Neo's tool surface. It reuses the executor's MCP manager + tool registry (so Neo's tools are byte-identical to the daemon's: fs, web_search, browser, git, shell, fetch, ...), advertises each tool's real JSON schema to the model as a function, and dispatches calls.
 
 Source files: `neo/internal/tools/tools.go`, `neo/internal/tools/surface.go`.
 
@@ -11,13 +11,13 @@ Source files: `neo/internal/tools/tools.go`, `neo/internal/tools/surface.go`.
 
 ## Design decisions
 
-**Execution-surface split.** Reversible actions stay "Natural" (Neo performs them directly, fully permissive). Actions that move or commit the user's on-chain funds — or need a wallet signature — "Escalate" across the wall into the MCL pipeline. Neo holds no signing key, so escalate-class tools are never advertised as directly-callable functions.
+**Execution-surface split.** Reversible actions stay "Natural" (Neo performs them directly, fully permissive). Actions that move or commit the user's on-chain funds, or need a wallet signature, "Escalate" across the wall into the MCL pipeline. Neo holds no signing key, so escalate-class tools are never advertised as directly-callable functions.
 
-**Synthetic `core_execute` tool.** The only way to reach escalate-class actions is through the `core_execute` function, which delegates to the MCL pipeline over HTTP. The user approves any spend inline before it happens.
+**Default escalate patterns are empty.** With MCL folded into Neo, the interactive agent carries the full tool surface directly. Every manifest tool is Natural and directly callable; nothing is walled behind `core_execute`. Spend policy is enforced network-side on the embedded wallet (`PaxeerSpendPolicy` / `PAXEER_MAX_SPEND_WEI`), not by withholding tools. The autonomous (Automatrix/sub-agent) surface keeps its own explicit money-tool guard.
 
-**Synthetic `memory_recall` tool.** Ambient page-faulting injects memory automatically each turn, but when the user asks "what do you remember?" the model needs a deliberate lookup it can actually perform. This tool searches the durable cortex store.
+**Six synthetic tools.** `core_execute` (MCL delegation), `memory_recall` (cortex search), `spawn_subagents` (concurrent sub-agents), `write_skill` (conscious pattern authoring), `todo` (live task checklist), and `workspace_preview` (workbench preview). None are real MCP servers; they never enter the manifest tool-bijection check.
 
-**Graceful degradation.** An MCP server that fails to start is recorded as a warning and skipped — Neo degrades rather than refusing to boot.
+**Graceful degradation.** An MCP server that fails to start is recorded as a warning and skipped; Neo degrades rather than refusing to boot.
 
 ---
 
@@ -28,17 +28,19 @@ type Surface int
 
 const (
     Natural  Surface = iota  // reversible, no wallet signature
-    Escalate Surface = iota  // moves/commits funds or needs signature
+    Escalate                 // moves/commits funds or needs signature
 )
 ```
 
-Default escalate patterns (case-insensitive substring match on tool name):
+```go
+type Classifier struct {
+    patterns []string
+}
 
-```
-send, transfer, swap, approve, deploy, settle, fund, mint, withdraw, stake, invoke, bridge
+func (c *Classifier) Classify(toolName, sideEffect string) Surface
 ```
 
-Heuristic + tunable via `Options.EscalatePatterns`. On-chain READS and dry-runs (compile/test/simulate/lookup/list) deliberately do NOT match.
+Default escalate patterns (`DefaultEscalatePatterns`) are currently empty. When non-empty, classification is a case-insensitive substring match on the tool name. The autonomous surface uses `ValueTransferPatterns` for its own explicit money-tool guard.
 
 ---
 
@@ -52,6 +54,7 @@ type Manager struct {
     classifier *Classifier
     delegate   DelegateFunc    // core_execute bridge
     recall     RecallFunc      // memory_recall bridge
+    swarm      SwarmFunc       // spawn_subagents bridge
     byFunc     map[string]*boundTool
     order      []string        // natural tool names (advertised)
     escalated  []string        // escalate tool names (hidden)
@@ -81,10 +84,14 @@ func (m *Manager) Schemas() []llm.Tool
 
 Returns the function schemas advertised to the model:
 - Every Natural tool (sorted, deterministic order)
-- The synthetic `core_execute` tool
-- The synthetic `memory_recall` tool (when memory store is wired)
+- The synthetic `core_execute` tool (when delegate is wired)
+- The synthetic `memory_recall` tool (when recall is wired)
+- The synthetic `spawn_subagents` tool (when swarm is wired)
+- The synthetic `write_skill` tool
+- The synthetic `todo` tool (when todo emitter is wired)
+- The synthetic `workspace_preview` tool (when preview launcher is wired)
 
-Escalate-class tools are NOT included — they are reachable only via `core_execute`.
+Escalate-class tools are NOT included; they are reachable only via `core_execute`.
 
 ### Dispatch
 
@@ -93,15 +100,19 @@ func (m *Manager) Dispatch(ctx context.Context, funcName string, args map[string
 ```
 
 Returns `(content, isError, err)`:
-- `err != nil` → transport/invocation failure (feeds recovery ladder: retry/adapt)
-- `isError=true, err=nil` → in-band failure the model should see and adapt to
-- Both empty → the tool ran successfully
+- `err != nil` then transport/invocation failure (feeds recovery ladder: retry/adapt)
+- `isError=true, err=nil` then in-band failure the model should see and adapt to
+- Both empty then the tool ran successfully
 
 Special handling:
-- `core_execute` → delegates to `DelegateFunc`
-- `memory_recall` → delegates to `RecallFunc`
-- Unknown name → `"unknown tool %q — it is not available"`, isError=true
-- Escalate-class tool called directly → `"%q moves funds... use core_execute"`, isError=true
+- `core_execute` then delegates to `DelegateFunc`
+- `memory_recall` then delegates to `RecallFunc`
+- `spawn_subagents` then delegates to `SwarmFunc`
+- `write_skill` then validates and writes PatternSpec to cortex
+- `todo` then records items via `TodoFunc`
+- `workspace_preview` then launches sandbox via `PreviewFunc`
+- Unknown name then `"unknown tool %q, it is not available"`, isError=true
+- Escalate-class tool called directly then `"%q moves funds... use core_execute"`, isError=true
 
 ---
 
@@ -113,7 +124,8 @@ Special handling:
 const CoreExecuteTool = "core_execute"
 ```
 
-Schema:
+Delegates a rigorous or money-moving task to Matrix's secure execution pipeline. The `intent` argument is a prose description passed to the MCL daemon's async API.
+
 ```json
 {
   "name": "core_execute",
@@ -131,15 +143,14 @@ Schema:
 }
 ```
 
-The `intent` argument is a prose description passed to the MCL daemon's async API. The daemon compiles it into an Intent IR, plans it, executes it, and returns the verifiable outcome.
-
 ### memory_recall
 
 ```go
 const MemoryRecallTool = "memory_recall"
 ```
 
-Schema:
+Searches the durable cortex store. The PRIMARY reasoning-time retrieval verb: the model calls it iteratively with a narrowing query, an optional type filter, a result cap, and an optional bi-temporal as-of instant.
+
 ```json
 {
   "name": "memory_recall",
@@ -147,16 +158,71 @@ Schema:
   "parameters": {
     "type": "object",
     "properties": {
-      "query": {
-        "type": "string",
-        "description": "What to look for..."
-      }
+      "query": { "type": "string", "description": "What to look for..." },
+      "types": { "type": "array", "items": { "type": "string" }, "description": "Memory type filter..." },
+      "k": { "type": "integer", "description": "Max results..." },
+      "as_of": { "type": "string", "description": "ISO-8601 instant for bi-temporal lookup..." }
     }
   }
 }
 ```
 
-Returns a rendered digest of relevant memories + user profile. If the memory store is not wired, the tool is not advertised.
+### spawn_subagents
+
+```go
+const SpawnSubagentsTool = "spawn_subagents"
+```
+
+Fans a task out to several task-scoped sub-agents that run concurrently, each in its own isolated context window with the restricted tool surface (full Natural, no money, no recursion). Heavy tool work stays in the sub-agents' windows; only a compact result returns to the parent's. Reachable only from the top-level agent; sub-agents do NOT get this tool (no recursion / fork-bombs).
+
+```json
+{
+  "name": "spawn_subagents",
+  "description": "Run multiple task-scoped sub-agents concurrently...",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "agents": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "name": { "type": "string" },
+            "persona": { "type": "string" },
+            "task": { "type": "string" }
+          },
+          "required": ["name", "task"]
+        }
+      }
+    },
+    "required": ["agents"]
+  }
+}
+```
+
+### write_skill
+
+```go
+const WriteSkillTool = "write_skill"
+```
+
+The agent consciously persists a reusable recipe as a cortex Pattern. After a proven task, the agent authors a structured PatternSpec (name, trigger, preconditions, steps, gotchas, success_criteria) and this tool validates it and writes it to the durable procedural store. Coverage starts low and is reinforced on each repeat success.
+
+### todo
+
+```go
+const TodoTool = "todo"
+```
+
+Maintains a short, ordered task plan with per-item status, surfaced to the user as a live checklist that ticks off in real time. Exactly one item may be `in_progress` at a time. Advertised only to the top-level agent and only when a todo emitter is wired.
+
+### workspace_preview
+
+```go
+const PreviewTool = "workspace_preview"
+```
+
+Launches the workbench preview: provisions the active project's on-demand sandbox and the result surfaces in the Preview pane. Advertised only when a preview launcher is wired.
 
 ---
 
@@ -166,13 +232,23 @@ Tools are advertised as `alias__name` (e.g. `fs__read_file`, `paxeer-net__get_ba
 
 ---
 
+## Restricting tools for sub-agents
+
+When `Options.RestrictTools` is set, the manager advertises the sub-agent tool surface: the full Natural set minus `core_execute`, `memory_recall`, and `spawn_subagents`. An `advertised` map on the agent enforces the boundary; dispatch rejects any name outside it.
+
+---
+
 ## Modifying the tool surface
 
 | What to change | Where |
 |---|---|
-| Escalate patterns | `tools/surface.go` — `DefaultEscalatePatterns` |
-| core_execute schema | `tools/tools.go` — `coreExecuteSchema()` |
-| memory_recall schema | `tools/tools.go` — `memoryRecallSchema()` |
-| Function naming | `tools/tools.go` — `funcName()`, `sanitizeFuncName()` |
-| Spawn timeout | `tools/tools.go` — `Options.SpawnTimeout` |
-| Agent manifest path | `config/config.go` — `ManifestPath` |
+| Escalate patterns | `tools/surface.go` - `DefaultEscalatePatterns` |
+| core_execute schema | `tools/tools.go` - `coreExecuteSchema()` |
+| memory_recall schema | `tools/tools.go` - `memoryRecallSchema()` |
+| spawn_subagents schema | `tools/tools.go` - `spawnSubagentsSchema()` |
+| write_skill schema | `tools/tools.go` - `writeSkillSchema()` |
+| todo schema | `tools/tools.go` - `todoSchema()` |
+| Function naming | `tools/tools.go` - `funcName()`, `sanitizeFuncName()` |
+| Spawn timeout | `tools/tools.go` - `Options.SpawnTimeout` |
+| Agent manifest path | `config/config.go` - `ManifestPath` |
+| Sub-agent tool restriction | `tools/tools.go` - `Options.RestrictTools` |

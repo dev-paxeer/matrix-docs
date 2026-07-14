@@ -1,6 +1,6 @@
 ---
 title: "Compiler"
-description: "The compiler wraps forge build and normalizes Foundry's JSON artifact output into a stable, agent-friendly shape. It supports both in-place compiles (the daemon's own project ro..."
+description: "The compiler wraps forge build and normalizes Foundry's JSON artifact output into a stable, agent-friendly shape. It supports both in-place compiles and self-contained source uploads."
 ---
 
 **Source files:** `internal/compiler/compiler.go`, `internal/forgeutil/run.go`
@@ -13,7 +13,7 @@ The compiler wraps `forge build` and normalizes Foundry's JSON artifact output i
 
 ### Forge as the backend, not solc directly
 
-The compiler shells out to `forge build` rather than invoking `solc` directly. This lets the engine leverage Foundry's dependency resolution, remappings, and optimizer settings without reimplementing them. The tradeoff is a subprocess dependency; `forge` must be on `PATH` or configured via `ForgePath`.
+The compiler shells out to `forge build --skip test` rather than invoking `solc` directly. This lets the engine leverage Foundry's dependency resolution, remappings, and optimizer settings without reimplementing them. The tradeoff is a subprocess dependency; `forge` must be on `PATH` or configured via `ForgePath` (default: `"forge"`).
 
 ### Artifact normalization
 
@@ -30,15 +30,15 @@ type Artifact struct {
 }
 ```
 
-The `Compiler` field is extracted from the artifact metadata (solc version, optimizer enabled, runs). This lets agents know exactly what was built.
+The `Compiler` field is extracted from the artifact metadata (solc version, optimizer enabled, optimizer runs). Files ending in `.metadata.json` are skipped.
 
 ### Target filtering
 
-`CompileRequest.Targets` is a list of contract names. When non-empty, only artifacts matching those names are collected. When empty, all artifacts are collected. This avoids returning the entire `out/` directory when the agent only needs one contract.
+`CompileRequest.Targets` is a list of contract names. When non-empty, only artifacts matching those names are collected. When empty, all artifacts from `out/` are collected. This avoids returning the entire `out/` directory when the agent only needs one contract.
 
 ### Registry indexing
 
-Every artifact is indexed in the registry under `projectID:name`. The registry key is `artifactKey(projectID, name) = projectID + ":" + name`. This flat key space is simple and collision-free across projects.
+Every artifact is indexed in the registry under `projectID:name`. The registry key is `artifactKey(projectID, name) = projectID + ":" + name`. This flat key space is simple and collision-free across projects. The `Compiler` metadata is serialized to JSON and stored in the `ArtifactRecord`.
 
 ### Artifact mirroring
 
@@ -54,7 +54,7 @@ CompileRequest
     └── Sources empty? → use ProjectRoot (or engine default)
 
 forge build --skip test
-    └── subprocess with 15-minute timeout
+    └── subprocess with 15-minute timeout (forgeutil.RunWithTimeout)
 
 parse out/ directory
     └── one JSON per contract → normalize → filter by Targets
@@ -71,8 +71,8 @@ return CompileResponse{ProjectID, Artifacts, Warnings}
 
 Forge failures are classified into two codes:
 
-- `COMPILER_FORGE_FAILED` — `forge build` subprocess failed (non-zero exit, timeout)
-- `COMPILER_SOLC_FAILED` — solc version mismatch or compile error (detected by scanning stderr/stdout for "solc")
+- `COMPILER_FORGE_FAILED` - `forge build` subprocess failed (non-zero exit, timeout)
+- `COMPILER_SOLC_FAILED` - solc version mismatch or compile error (detected by scanning stderr/stdout for "solc")
 
 Both are retryable (`retry: true`) because they may be transient (RPC issues, file locks, solc download).
 
@@ -91,7 +91,7 @@ func ProjectID(root string) string {
 }
 ```
 
-For uploaded-source compiles, the project ID is derived from the sorted source set (see `engine.md` — `sourcesProjectID`).
+For uploaded-source compiles, the project ID is derived deterministically from the sorted source set (see `engine.mdx` - `sourcesProjectID`).
 
 ---
 
@@ -100,16 +100,13 @@ For uploaded-source compiles, the project ID is derived from the sorted source s
 `forgeutil/run.go` provides:
 
 ```go
-func Run(ctx context.Context, forgePath, root string, args ...string) (stdout, stderr string, err error)
+func Run(forgePath, root string, timeout time.Duration, args ...string) (stdout, stderr string, err error)
 func RunWithTimeout(forgePath, root string, timeout time.Duration, args ...string) (string, string, error)
 func FormatForgeError(stdout, stderr string, err error) string
-func EnsureForge(forgePath string) error
 ```
 
-- `Run` appends `--root <root>` to the args (forge v1.7+ convention)
 - `RunWithTimeout` wraps `Run` with a context timeout
 - `FormatForgeError` prefers stderr, falls back to stdout, then to the error message
-- `EnsureForge` probes `forge --version` as a health check
 
 ---
 
@@ -117,8 +114,8 @@ func EnsureForge(forgePath string) error
 
 | What to change | Where |
 |---|---|
-| Add artifact field | `pkg/types/compile.go` — `Artifact` struct |
-| Change forge args | `internal/compiler/compiler.go` — `Compile` method |
-| Change timeout | `internal/compiler/compiler.go` — `RunWithTimeout` call |
-| Add solc direct mode | New package `internal/solc/` — alternative to `Compiler` |
-| Change artifact path | `internal/compiler/compiler.go` — `collectArtifacts` |
+| Add artifact field | `pkg/types/compile.go` - `Artifact` struct |
+| Change forge args | `internal/compiler/compiler.go` - `Compile` method |
+| Change timeout | `internal/compiler/compiler.go` - `RunWithTimeout` call (currently 15 min) |
+| Add solc direct mode | New package `internal/solc/` - alternative to `Compiler` |
+| Change artifact path | `internal/compiler/compiler.go` - `collectArtifacts` |

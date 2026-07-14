@@ -1,11 +1,11 @@
 ---
 title: "tachyon-tools Developer Docs"
-description: "1. Agent-native, not human-native. The CLI is a thin client; the product is the API/MCP/JSON-RPC surfaces. Every response is machine-parseable JSON with stable error codes. 2. S..."
+description: "Agent-native Solidity/EVM toolbox: compile, test, simulate, deploy, and call verbs over HTTP API, JSON-RPC 2.0, and MCP stdio with structured I/O, simulation-first safety, idempotent deploys, and policy-gated signing."
 ---
 
-**Source:** `github.com/paxlabs-inc/matrix-core/tachyon`  
-**Language:** Go 1.22+ (daemon), Solidity (contracts corpus), JavaScript (test suite)  
-**One-sentence contract:** An agent-native Solidity / EVM toolbox that exposes compile, test, simulate, deploy, and call verbs over HTTP API, JSON-RPC, and MCP stdio — with structured I/O, simulation-first safety, idempotent deploys, and policy-gated signing.
+**Source:** `github.com/paxlabs-inc/matrix-core/tachyon`
+**Language:** Go 1.22+ (daemon), Solidity (contracts corpus), JavaScript (test suite)
+**One-sentence contract:** An agent-native Solidity / EVM toolbox that exposes compile, test, simulate, deploy, and call verbs over HTTP API, JSON-RPC, and MCP stdio, with structured I/O, simulation-first safety, idempotent deploys, and policy-gated signing.
 
 ---
 
@@ -13,23 +13,23 @@ description: "1. Agent-native, not human-native. The CLI is a thin client; the p
 
 | Doc | Subsystem | Source files |
 |---|---|---|
-| [index.md](index.md) | This file | — |
-| [engine.md](engine.md) | Core engine — verb dispatch, envelope types, error taxonomy | `internal/engine/engine.go`, `internal/engine/workdir.go` |
-| [compiler.md](compiler.md) | Solidity compiler — forge build, artifact normalization, ephemeral source workdirs | `internal/compiler/compiler.go`, `internal/forgeutil/run.go` |
-| [deployer.md](deployer.md) | Intent-based deployment — idempotency, CREATE2, on-chain confirmation, registry write-back | `internal/deployer/deployer.go` |
-| [wallet.md](wallet.md) | Signing backends — self-hosted (raw/keystore/env) and embedded (Paxeer DID lane) with policy gate | `internal/wallet/wallet.go`, `internal/wallet/embedded.go` |
-| [evm-client.md](evm-client.md) | go-ethereum RPC wrapper — tx building, gas estimation, EIP-1559, raw broadcast, receipt polling | `internal/evm/client.go`, `internal/evm/evm.go` |
-| [simulate.md](simulate.md) | Dry-run simulation — eth_call + optional debug trace, revert capture | `internal/simulate/simulate.go` |
-| [tester.md](tester.md) | Forge test runner — JSON parsing, suite aggregation, partial failure handling | `internal/tester/tester.go` |
-| [abi-encoder.md](abi-encoder.md) | ABI encoding bridge — JSON-to-Go type coercion for method calls and constructors | `internal/abienc/abienc.go` |
-| [registry.md](registry.md) | Artifact + deployment index — JSON-file backed, mutex-protected, atomic saves | `internal/registry/registry.go` |
-| [chains.md](chains.md) | Chain profile manager — presets, custom registration, numeric chain-id fallback, inline RPC | `internal/chains/chains.go` |
-| [config.md](config.md) | Runtime configuration — `.kvx` format, env precedence, wallet mode selection, policy profiles | `internal/config/config.go`, `internal/config/kvx.go` |
-| [api-server.md](api-server.md) | HTTP API — REST routes, JSON-RPC passthrough, Bearer auth middleware, structured logging | `pkg/api/server.go` |
-| [mcp-server.md](mcp-server.md) | MCP stdio server — NDJSON-RPC, tool registry, selftest, error formatting | `pkg/mcp/server.go`, `pkg/mcp/tools.go` |
-| [rpc-server.md](rpc-server.md) | JSON-RPC dispatcher — `tachyon_*` method routing, envelope wrapping | `pkg/rpc/server.go` |
-| [types.md](types.md) | Shared request/response types — envelopes, errors, chain profiles, artifacts | `pkg/types/*.go` |
-| [daemon.md](daemon.md) | Entry point — flag parsing, engine wiring, signal handling, MCP vs HTTP mode | `cmd/tachyond/main.go` |
+| [overview.mdx](overview.mdx) | This file | - |
+| [engine.mdx](engine.mdx) | Core engine, verb dispatch, envelope types, error taxonomy | `internal/engine/engine.go`, `internal/engine/workdir.go` |
+| [compiler.mdx](compiler.mdx) | Solidity compiler, forge build, artifact normalization, ephemeral source workdirs | `internal/compiler/compiler.go`, `internal/forgeutil/run.go` |
+| [deployer.mdx](deployer.mdx) | Intent-based deployment, idempotency, CREATE2, on-chain confirmation, registry write-back | `internal/deployer/deployer.go` |
+| [wallet.mdx](wallet.mdx) | Signing backends, self-hosted (raw/keystore/env) and embedded (Paxeer DID lane) with policy gate | `internal/wallet/wallet.go`, `internal/wallet/embedded.go` |
+| [evm-client.mdx](evm-client.mdx) | go-ethereum RPC wrapper, tx building, gas estimation, EIP-1559, raw broadcast, receipt polling | `internal/evm/client.go`, `internal/evm/evm.go` |
+| [simulate.mdx](simulate.mdx) | Dry-run simulation, eth_call + optional debug trace, revert capture | `internal/simulate/simulate.go` |
+| [tester.mdx](tester.mdx) | Forge test runner, JSON parsing, suite aggregation, partial failure handling | `internal/tester/tester.go` |
+| [abi-encoder.mdx](abi-encoder.mdx) | ABI encoding bridge, JSON-to-Go type coercion for method calls and constructors | `internal/abienc/abienc.go` |
+| [registry.mdx](registry.mdx) | Artifact + deployment index, JSON-file backed, mutex-protected, atomic saves | `internal/registry/registry.go` |
+| [chains.mdx](chains.mdx) | Chain profile manager, presets, custom registration, numeric chain-id fallback, inline RPC | `internal/chains/chains.go` |
+| [config.mdx](config.mdx) | Runtime configuration, `.kvx` format, env precedence, wallet mode selection, policy profiles | `internal/config/config.go`, `internal/config/kvx.go` |
+| [api-server.mdx](api-server.mdx) | HTTP API, REST routes, JSON-RPC passthrough, Bearer auth middleware, structured logging | `pkg/api/server.go` |
+| [mcp-server.mdx](mcp-server.mdx) | MCP stdio server, NDJSON-RPC, tool registry, selftest, error formatting | `pkg/mcp/server.go`, `pkg/mcp/tools.go` |
+| [rpc-server.mdx](rpc-server.mdx) | JSON-RPC dispatcher, `tachyon_*` method routing, envelope wrapping | `pkg/rpc/server.go` |
+| [types.mdx](types.mdx) | Shared request/response types, envelopes, errors, chain profiles, artifacts | `pkg/types/*.go` |
+| [daemon.mdx](daemon.mdx) | Entry point, flag parsing, engine wiring, signal handling, MCP vs HTTP mode | `cmd/tachyond/main.go` |
 
 ---
 
@@ -38,7 +38,7 @@ description: "1. Agent-native, not human-native. The CLI is a thin client; the p
 ```
 tachyon/
 ├── cmd/
-│   ├── tachyon/          # thin CLI client
+│   ├── tachyon/          # thin CLI client (main.go)
 │   └── tachyond/         # daemon entry point (main.go)
 ├── pkg/
 │   ├── api/              # HTTP REST server
@@ -68,10 +68,11 @@ tachyon/
 
 ## Key locked decisions
 
-1. **Agent-native, not human-native.** The CLI is a thin client; the product is the API/MCP/JSON-RPC surfaces. Every response is machine-parseable JSON with stable error codes.
-2. **Simulation-first.** `simulate` is a first-class verb. Agents dry-run before they broadcast. Revert data is captured and returned structurally.
-3. **Idempotent by key.** Deploys carry an `idempotency_key` (+ optional CREATE2 salt) so retries don't double-deploy. The registry tracks confirmed deployments.
-4. **Keys behind policy.** Agents hold scoped capability tokens, never raw keys. Every signature passes a policy gate (spend cap, allow-list, chain allow-list).
-5. **Self-contained source uploads.** A non-empty `sources` map on compile/test makes the request self-contained: the engine materializes an ephemeral Foundry project with the baked dependency tree linked in.
-6. **Conservative EVM version.** Uploaded-source compiles default to `shanghai` (not `cancun`) so artifacts don't emit MCOPY, which pre-Cancun chains reject.
+1. **Agent-native, not human-native.** The CLI (`cmd/tachyon/`) is a thin HTTP client that pipes JSON stdin to the daemon's REST endpoints; the product is the API/MCP/JSON-RPC surfaces. Every response is machine-parseable JSON with stable error codes.
+2. **Simulation-first.** `simulate` is a first-class verb. Agents dry-run before they broadcast. Revert data is captured and returned structurally. `call` supports `simulate_only: true` for the same effect.
+3. **Idempotent by key.** Deploys carry an `idempotency_key` (+ optional CREATE2 salt) so retries do not double-deploy. The registry tracks confirmed deployments and verifies on-chain bytecode before returning cached results.
+4. **Keys behind policy.** Agents hold scoped capability tokens, never raw keys. Every signature passes a policy gate (`Gate.Authorize`) that enforces spend caps, contract allow-lists, and chain allow-lists.
+5. **Self-contained source uploads.** A non-empty `sources` map on compile/test makes the request self-contained: the engine materializes an ephemeral Foundry project with the baked dependency tree (forge-std, OpenZeppelin, erc4626-tests, halmos-cheatcodes) linked in via symlinks.
+6. **Conservative EVM version.** Uploaded-source compiles default to `shanghai` (not `cancun`) so artifacts do not emit MCOPY, which pre-Cancun chains reject. Callers can override per-chain via `CompileRequest.EVMVersion`.
 7. **Structured errors everywhere.** Every failure carries a machine-stable `code`, human `message`, and boolean `retry` flag. Partial results (e.g., test failures with pass counts) are returned in the envelope `data` field even when `ok: false`.
+8. **Dual wallet modes.** `self_hosted` signs locally with an operator-held key (raw hex, env var, or geth v3 keystore). `embedded` delegates signing and broadcasting to the Paxeer embedded wallet over the agent-native DID lane, supporting both single-tenant (seed on disk) and multi-tenant (forwarded token, zero seeds) deployments.

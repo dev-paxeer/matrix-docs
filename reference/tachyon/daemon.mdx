@@ -39,7 +39,7 @@ srv.Shutdown(ctx)
 
 ### Fatal error handling
 
-Config load failures and engine init failures are fatal (`os.Exit(1)`). Server failures in the HTTP goroutine are also fatal. This is a daemon, not a library — crashing on misconfiguration is preferred over limping with undefined behavior.
+Config load failures and engine init failures are fatal (`os.Exit(1)`). Server failures in the HTTP goroutine are also fatal. Crashing on misconfiguration is preferred over limping with undefined behavior.
 
 ### No daemonization
 
@@ -59,10 +59,10 @@ Configure logger (stdout for HTTP, stderr for MCP/selftest)
 Selftest? → verify tool registry → exit 0/1
     │
     ▼
-Load config (tachyon.config.kvx + environment)
+Load config (tachyon.config.kvx + environment + .env)
     │
     ▼
-Initialize engine (registry, chains, compiler, tester, simulator, deployer, wallet)
+Initialize engine (registry, chains, compiler, tester, simulator, deployer, wallet gate)
     │
     ▼
 MCP mode? → RunStdio(eng) → block on stdin
@@ -73,11 +73,25 @@ HTTP mode? → api.New(eng, logger) → ListenAndServe → block on signal
 
 ---
 
+## Thin CLI client
+
+The `cmd/tachyon/` binary is a thin HTTP client, not the daemon itself. It reads JSON from stdin and posts to the daemon's REST endpoints:
+
+```sh
+echo '{"project_root":"."}' | tachyon compile
+tachyon health
+tachyon chains
+```
+
+The CLI defaults to `http://127.0.0.1:8645` (overridable via `--addr` or `TACHYON_HTTP_ADDR`). Request timeout is 30 minutes for POST (long builds/tests), 120 seconds for GET.
+
+---
+
 ## Modifying the daemon
 
 | What to change | Where |
 |---|---|
-| Add flag | `cmd/tachyond/main.go` — `flag` declarations |
-| Add startup mode | `cmd/tachyond/main.go` — switch after flag parse |
-| Change shutdown timeout | `cmd/tachyond/main.go` — `context.WithTimeout` |
-| Add health check | `pkg/api/server.go` — `handleHealthz` |
+| Add flag | `cmd/tachyond/main.go` - `flag` declarations |
+| Add startup mode | `cmd/tachyond/main.go` - switch after flag parse |
+| Change shutdown timeout | `cmd/tachyond/main.go` - `context.WithTimeout` |
+| Add health check | `pkg/api/server.go` - `handleHealthz` |

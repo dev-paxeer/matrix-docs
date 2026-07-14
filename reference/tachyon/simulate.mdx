@@ -1,39 +1,39 @@
 ---
 title: "Simulate"
-description: "The simulator performs eth_call dry runs without broadcasting. It is a first-class verb in the engine, reflecting the simulation-first design principle: agents dry-run before th..."
+description: "The simulator performs eth_call dry runs with optional debug_traceCall tracing. It resolves chain profiles, dials RPC, and returns structured results with gas estimates and revert reasons."
 ---
 
 **Source file:** `internal/simulate/simulate.go`
 
-The simulator performs `eth_call` dry runs without broadcasting. It is a first-class verb in the engine, reflecting the simulation-first design principle: agents dry-run before they commit.
+The simulator performs `eth_call` dry runs with optional `debug_traceCall` tracing. It is the backend for both the `simulate` verb and the `call` verb when `simulate_only: true`.
 
 ---
 
 ## Design decisions
 
-### No wallet required
-
-Simulation is a read-only operation. No signer is needed. This means the simulator works even when the wallet is unconfigured, making it safe for exploration and debugging.
-
-### Timeout bounded
-
-Every simulation runs with a 30-second context timeout. This prevents runaway calls on slow or unresponsive RPCs. The timeout is hardcoded; a future enhancement could make it configurable per-chain.
-
-### Revert capture
-
-If `eth_call` reverts, the error is captured in `SimulateResponse.Revert` and the envelope is `ok: false` with `code: SIMULATE_FAILED`. The gas estimate is still returned (from a separate `eth_estimateGas` call) so the agent knows what the call would have cost.
-
-### Optional debug trace
-
-When `SimulateRequest.Trace` is true, the simulator runs `debug_traceCall` after the `eth_call`. The trace is returned as raw JSON (`any`) in `SimulateResponse.Trace`. If tracing fails (e.g., RPC doesn't support it), the error is silently ignored — the primary `eth_call` result is still returned.
-
 ### Chain resolution
 
-The simulator uses the same chain resolution as deploy/call: `chain_id` → registry lookup, `rpc_url` → inline RPC, or active chain from registry. This ensures consistency across all chain-facing verbs.
+The simulator resolves the target chain from three sources, in priority order:
+
+1. Inline `rpc_url` on the request (anonymous inline chain)
+2. `chain_id` on the request (matched against presets or custom profiles by id or numeric chain-id)
+3. Active chain from the registry
+
+### Timeout
+
+All calls use a 30-second context timeout. This prevents hung RPC calls from blocking the daemon.
+
+### Gas estimation alongside eth_call
+
+The simulator runs `EstimateGas` in parallel with `CallMessage`. The gas estimate is returned even when the call reverts, giving agents insight into the cost of a reverted call.
+
+### Trace support
+
+When `req.Trace` is true, the simulator calls `debug_traceCall` with `disableStorage: true` to reduce trace size. The trace is returned as raw JSON (`any`). If tracing fails (node does not support it), the trace is silently omitted.
 
 ---
 
-## Request/response types
+## SimulateRequest
 
 ```go
 type SimulateRequest struct {
@@ -46,7 +46,11 @@ type SimulateRequest struct {
     Block   string `json:"block,omitempty"`
     Trace   bool   `json:"trace,omitempty"`
 }
+```
 
+## SimulateResponse
+
+```go
 type SimulateResponse struct {
     Result      string `json:"result,omitempty"`
     GasEstimate uint64 `json:"gas_estimate,omitempty"`
@@ -57,44 +61,14 @@ type SimulateResponse struct {
 
 ---
 
-## Simulation flow
+## Error handling
 
-```
-SimulateRequest
-    │
-    ▼
-Resolve chain profile (chain_id / rpc_url / active)
-    │
-    ▼
-Dial RPC client
-    │
-    ▼
-eth_call (30s timeout)
-    │
-    ├── Success → result hex
-    │
-    └── Revert → capture reason, return error envelope
-    │
-    ▼
-eth_estimateGas (for gas estimate, even on revert)
-    │
-    ▼
-Optional debug_traceCall (if Trace=true)
-    │
-    ▼
-Return SimulateResponse
-```
-
----
-
-## Error codes
-
-| Code | Retry | Meaning |
-|---|---|---|
-| `SIMULATE_FAILED` | no | `eth_call` reverted or RPC error |
-| `CHAIN_NOT_FOUND` | no | Unknown chain_id |
-| `CHAIN_RPC_FAILED` | yes | RPC dial or transport error |
-| `INVALID_REQUEST` | no | Missing `to` address |
+| Code | Meaning |
+|---|---|
+| `SIMULATE_FAILED` | `eth_call` returned an error (revert reason captured in `data.revert`) |
+| `INVALID_REQUEST` | Missing `to` field |
+| `CHAIN_NOT_FOUND` | Could not resolve chain profile |
+| `CHAIN_RPC_FAILED` | RPC dial error |
 
 ---
 
@@ -102,7 +76,6 @@ Return SimulateResponse
 
 | What to change | Where |
 |---|---|
-| Add simulation state override | `internal/simulate/simulate.go` — pass state override to `eth_call` |
-| Make timeout configurable | `internal/simulate/simulate.go` — add field to `SimulateRequest` |
-| Add trace formatting | `internal/simulate/simulate.go` — parse trace into structured format |
-| Add block override | `internal/simulate/simulate.go` — pass block number to `CallMessage` |
+| Change timeout | `internal/simulate/simulate.go` - `context.WithTimeout` (30s) |
+| Add state override support | `internal/evm/client.go` - `CallMessage` signature |
+| Add access list generation | `internal/evm/client.go` - new `CreateAccessList` method |

@@ -1,9 +1,9 @@
 ---
 title: "Context Bundle"
-description: "cortex.Context is the cold-start memory composer — the entry point an agent calls to hydrate its working memory at the beginning of a task. It returns a structured Bundle carryi..."
+description: "cortex.Context is the cold-start memory composer, the entry point an agent calls to hydrate its working memory at the beginning of a task."
 ---
 
-`cortex.Context` is the cold-start memory composer — the entry point an agent calls to hydrate its working memory at the beginning of a task. It returns a structured `Bundle` carrying memories from three tiers, ranked by salience, rendered to a token budget, with overflow as `ReachableURIs` the agent can lazily resolve later.
+`cortex.Context` is the cold-start memory composer, the entry point an agent calls to hydrate its working memory at the beginning of a task. It returns a structured `Bundle` carrying memories from three tiers, ranked by salience, rendered to a token budget, with overflow as `ReachableURIs` the agent can lazily resolve later.
 
 Source file: `cortex/context.go`.
 
@@ -11,13 +11,15 @@ Source file: `cortex/context.go`.
 
 ## Design decisions
 
-**No vector search at cold start.** `ContextOpts` has no `Near` / `NearVector` field. Cold-start with vector recall is a forbidden combination at the API level — eliminating the field at compile time is the strongest possible enforcement. Vector recall requires `Find Near`.
+**No vector search at cold start.** `ContextOpts` has no `Near` / `NearVector` field. Cold-start with vector recall is a forbidden combination. Eliminating the field at compile time is the strongest possible enforcement. Vector recall requires `Find Near`.
 
 **Pure read path.** `Context` emits no journal entries, no salience bumps, no index writes. The `OverallRoot` is identical before and after a `Context` call.
 
-**Three tiers, flexible ratios.** All three tiers are fully loaded, globally trimmed to `BudgetTokens` by salience. The "30% pinned, 50% frame-relevant, 20% outcomes" spec ratio is implemented as a salience floor on Pinned-tier members — they survive budget pressure preferentially, not via hard per-tier token quotas.
+**Three tiers, flexible ratios.** All three tiers are fully loaded, globally trimmed to `BudgetTokens` by salience. The "30% pinned, 50% frame-relevant, 20% outcomes" spec ratio is implemented as a salience floor on Pinned-tier members, they survive budget pressure preferentially, not via hard per-tier token quotas.
 
 **Dedup priority: Pinned > Outcomes > FrameRelevant.** A memory that appears in multiple tiers lands in the earlier-priority tier only.
+
+**Learned weights used for ranking.** `Context` loads the per-actor learned `salience.Weights` via `salience.ReadWeights` once and threads them through all ranking and trim decisions. Cold-start actors (no `meta/salience_weights` key) use the §8.2 defaults.
 
 ---
 
@@ -38,13 +40,13 @@ Pinned members receive a salience floor of `0.7` (`salience.PinnedFloor`) so the
 
 Memories indexed under `idx/frame` for the supplied (verb, object-kind, object-ref) tuples. Ordered by salience descending.
 
-The Frame-relevant tier scans `idx/frame/<verb>/<obj_kind>/<hash(ref)>/*` for each entry in `ContextOpts.Objects`. Objects is a `map[string]string` of ObjKind name → ref string. Unknown kind names return `ErrInvalidObjKind`.
+The Frame-relevant tier scans `idx/frame/<verb>/<obj_kind>/<hash(ref)>/*` for each entry in `ContextOpts.Objects`. Objects is a `map[string]string` of ObjKind name to ref string. Unknown kind names return `ErrInvalidObjKind`.
 
 ### TierOutcomes
 
 Prior Event memories indexed under `idx/actor_obj` for the same (verb, object-ref) tuples. Ordered by creation timestamp descending (most recent first), salience descending as tiebreak. Capped at `OutcomeLimit` (default 3).
 
-Only `TypeEvent` memories appear in this tier — the spec describes Outcomes as "1–3 prior similar intents and their outcomes".
+Only `TypeEvent` memories appear in this tier, the spec describes Outcomes as "1-3 prior similar intents and their outcomes".
 
 ---
 
@@ -62,14 +64,14 @@ bundle, err := c.Context(cortex.ContextOpts{
 })
 ```
 
-`Verb` is required to activate the Frame-relevant and Outcomes tiers. If `Verb` is zero (the zero value of `memory.Verb`) only `TierPinned` runs — Frame and Outcomes return empty.
+`Verb` is required to activate the Frame-relevant and Outcomes tiers. If `Verb` is zero (the zero value of `memory.Verb`) only `TierPinned` runs, Frame and Outcomes return empty.
 
 ### ContextOpts
 
 ```go
 type ContextOpts struct {
     Verb         memory.Verb          // D7 verb; zero = Pinned-only mode
-    Objects      map[string]string    // kind name → ref string
+    Objects      map[string]string    // kind name to ref string
     BudgetTokens int                  // token cap; default 3000, max 4000
     IncludeTiers []Tier               // nil = all three tiers
     OutcomeLimit int                  // default 3
@@ -109,20 +111,20 @@ type Bundle struct {
 
 ```
 1. Scope verification (once, if Scope non-nil)
-2. Normalize opts — clamp BudgetTokens, apply Scope.BudgetTokens cap
-3. Parse Objects map → (kind, ref, hash) tuples
+2. Normalize opts, clamp BudgetTokens, apply Scope.BudgetTokens cap
+3. Parse Objects map -> (kind, ref, hash) tuples
 4. Load per-actor learned salience Weights
 
 5. Tier scans (sequential):
-   a. TierPinned    → Identity + Constraint{Hard} + Goal{Active}
-   b. TierOutcomes  → idx/actor_obj scan, top-N created desc
-   c. TierFrameRelevant → idx/frame scan, salience desc
+   a. TierPinned    -> Identity + Constraint{Hard} + Goal{Active}
+   b. TierOutcomes  -> idx/actor_obj scan, top-N created desc
+   c. TierFrameRelevant -> idx/frame scan, salience desc
 
 6. Cross-tier dedup (Pinned > Outcomes > FrameRelevant)
 
 7. Load Head + Version + salience score for every surviving ID
    - Apply PinnedFloor to Pinned members
-   - Apply Scope.Allows per-candidate filter (silently — no violation log)
+   - Apply Scope.Allows per-candidate filter (silently, no violation log)
    - Filter tombstoned memories
 
 8. Render to Form (short/medium from persisted Forms; full live)
@@ -146,11 +148,13 @@ type Bundle struct {
 | `DefaultOutcomeLimit` | 3 | Max Outcomes-tier memories |
 | `MaxReachableURIs` | 64 | Max overflow pointers in `Bundle.ReachableURIs` |
 
+`MaxBudgetTokens=4000` is deliberate, not a small-model artifact. Sourced from research/03 §2.3: "Tokens returned (auto form): 1.5-3k; ceiling 4k". The framing is "cold-start fits in 4k regardless of model size" - the rest of any frontier-model context window is reserved for the plan + tool I/O, not for cortex memory recall.
+
 ---
 
 ## Latency target
 
-p50 &lt; 80 ms, hard ceiling &lt; 250 ms. All three tier scans are sequential point-reads and bounded prefix-scans over Pebble (10–20 µs warm). Parallelizing the tiers is a future optimization if profiling demands it.
+p50 < 80 ms, hard ceiling < 250 ms. All three tier scans are sequential point-reads and bounded prefix-scans over Pebble (10-20 us warm). Parallelizing the tiers is a future optimization if profiling demands it.
 
 ---
 
@@ -158,10 +162,10 @@ p50 &lt; 80 ms, hard ceiling &lt; 250 ms. All three tier scans are sequential po
 
 | What to change | Where |
 |---|---|
-| Pinned tier membership criteria | `cortex/context.go` — `tierPinned()` |
-| Frame-relevant index scan | `cortex/context.go` — `tierFrameRelevant()` |
-| Outcomes tier index scan | `cortex/context.go` — `tierOutcomes()` |
-| Budget defaults and caps | `cortex/context.go` — `DefaultBudgetTokens`, `MaxBudgetTokens`, `MaxReachableURIs` |
-| Tier dedup priority order | `cortex/context.go` — dedup map construction (change which tier runs first) |
-| Pinned salience floor | `cortex/salience` — `PinnedFloor` constant |
-| Outcome limit default | `cortex/context.go` — `DefaultOutcomeLimit` |
+| Pinned tier membership criteria | `cortex/context.go` - `tierPinned()` |
+| Frame-relevant index scan | `cortex/context.go` - `tierFrameRelevant()` |
+| Outcomes tier index scan | `cortex/context.go` - `tierOutcomes()` |
+| Budget defaults and caps | `cortex/context.go` - `DefaultBudgetTokens`, `MaxBudgetTokens`, `MaxReachableURIs` |
+| Tier dedup priority order | `cortex/context.go` - dedup map construction (change which tier runs first) |
+| Pinned salience floor | `cortex/salience` - `PinnedFloor` constant |
+| Outcome limit default | `cortex/context.go` - `DefaultOutcomeLimit` |

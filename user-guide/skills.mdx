@@ -1,24 +1,99 @@
 ---
 title: Using Skills
-description: "What skills are from a user's perspective — packaged capabilities the agent draws on, how they shape clarifying questions, and how correction works."
+description: "What skills are, how Matrix selects and applies them, how they shape conversations, and how to create your own."
 ---
 
-A **skill** is a packaged capability — a recipe that tells Matrix how to handle a class of request (writing a plan, reviewing code, deploying a contract). You don't invoke skills directly; the agent selects the right one based on what you ask.
+A **skill** is a reusable package of procedural knowledge that tells Matrix how to handle a class of request. Think of it as a recipe: a structured set of instructions, tool configurations, and decision logic that Neo draws on when you ask for something specific.
+
+You do not invoke skills directly. Neo selects the right skill based on what you ask and how you ask it.
+
+## What skills contain
+
+Each skill is a structured document (a `SKILL.mtx` file) that defines:
+
+- **A trigger condition.** What kind of request activates this skill.
+- **Required information.** What the skill needs before it can proceed. If a required detail is missing, Neo asks you one focused question instead of guessing.
+- **Steps and tool usage.** The sequence of actions Neo should take, including which tools to call and in what order.
+- **Constraints and guardrails.** Budget limits, safety checks, and quality gates that the skill enforces.
+- **Output format.** How the skill's results should be presented to you.
+
+Skills are versioned and content-addressed. Each one is identified by a URI (`matrix://skill/<slug>@<version>`) and verified by a deterministic hash, so the same skill always produces the same behavior.
+
+## How Neo selects a skill
+
+When you send a message, Neo evaluates it against the available skills. If a skill's trigger condition matches your request, Neo loads it and follows its instructions. The selection is automatic and based on your intent, not on keywords or syntax you need to memorize.
+
+If no skill matches, Neo handles your request using its general capabilities: the full tool surface, its memory, and its own reasoning.
 
 ## How skills shape the conversation
 
-- **Clarifying questions.** A skill knows what it needs. If a required detail is missing, Matrix asks one focused question rather than guessing.
-- **Typed structure.** Skills extract a typed plan from your prose, so your intent survives multi-step execution instead of drifting.
-- **Honest gaps.** If something is genuinely unknown, Matrix marks it as a blocking gap and tells you, instead of inventing an answer.
+Skills make Neo a better collaborator in three specific ways:
+
+<Columns cols={3}>
+  <Card title="Focused questions" icon="circle-question">
+    A skill knows what information it needs. If a required detail is missing, Neo asks one targeted question rather than making assumptions or asking you to restate everything.
+  </Card>
+  <Card title="Typed structure" icon="diagram-project">
+    Skills extract a typed plan from your prose request. Your intent survives multi-step execution without drifting or getting lost in translation.
+  </Card>
+  <Card title="Honest gaps" icon="triangle-exclamation">
+    If something is genuinely unknown or missing, the skill marks it as a blocking gap and tells you, instead of inventing an answer or proceeding with incomplete information.
+  </Card>
+</Columns>
 
 ## Correcting the agent
 
-Because the plan is typed and inspectable, you can correct it structurally — adjust a constraint, change a target, raise a budget — without rewriting your whole request from scratch.
+Because skills produce typed, inspectable plans, you can correct Neo structurally. Adjust a constraint, change a target, raise a budget, or swap an approach, all without rewriting your whole request from scratch.
 
-<Tip>
-You can ask Matrix what it's about to do before it does anything irreversible. The rigorous rail always produces a reviewable plan for monetary or on-chain work.
-</Tip>
+For example:
 
-<Card title="Core concepts" icon="lightbulb" href="/concepts">
-  The ideas behind skills, intents, and plans.
-</Card>
+> **you:** Write a deployment plan for the token indexer service.
+>
+> **Neo:** Here's the plan. It targets the staging environment with a 10-minute rollback window.
+>
+> **you:** Change the target to production and extend the rollback window to 30 minutes.
+>
+> **Neo:** Updated. The plan now targets production with a 30-minute rollback window.
+
+Neo applies the correction to the existing plan rather than starting over.
+
+<Info>
+You can always ask Neo what it is about to do before it acts. For monetary or on-chain work, the rigorous rail always produces a reviewable plan regardless.
+</Info>
+
+## The skill corpus
+
+Matrix ships with a curated corpus of skills covering common workflows. These are maintained and versioned alongside the platform, so they stay accurate as the tool surface evolves. Examples include:
+
+- **Writing plans.** Structured deployment, migration, and rollout plans with typed steps and rollback strategies.
+- **Code review.** Security scanning, quality gates, and automated fixes for code changes.
+- **Research and analysis.** Deep research of repositories, web sources, and on-chain data with source attribution.
+- **Content creation.** Documents, presentations, and structured output with consistent formatting.
+
+The corpus grows over time. New skills are added as patterns emerge, and existing skills are updated when tools or workflows change.
+
+## Creating your own skills
+
+You can author custom skills to codify your own workflows. A skill file follows a standard structure:
+
+```
+matrix://skill/my-workflow@1
+  §SKILL.id        = my-workflow
+  §SKILL.version   = 1
+  §SKILL.trigger   = "when the user asks to..."
+  §SKILL.requires  = [...]
+  §SKILL.steps     = [...]
+  §SKILL.tools     = [...]
+  §SKILL.output    = "..."
+```
+
+Custom skills are loaded from your workspace and take precedence over the built-in corpus when their trigger conditions match. This lets you tailor Neo's behavior to your specific needs without modifying the platform.
+
+<Columns cols={2}>
+  <Card title="Chatting with Neo" icon="comments" href="/user-guide/chat">
+    How everyday conversation and tool use works.
+  </Card>
+  <Card title="Wallet & PAX" icon="wallet" href="/user-guide/wallet">
+    How wallet integration and on-chain actions work.
+  </Card>
+</Columns>

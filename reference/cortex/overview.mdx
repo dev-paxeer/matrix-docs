@@ -1,11 +1,11 @@
 ---
 title: "Cortex: Developer Reference"
-description: "Cortex is Matrix's per-actor persistent memory store — a Pebble-backed KV database with a typed taxonomy, salience-ranked queries, async embeddings, Merkle snapshots, and a full replay invariant."
+description: "Cortex is Matrix's per-actor persistent memory store, a Pebble-backed KV database with a typed taxonomy, salience-ranked queries, async embeddings, Merkle snapshots, and a full replay invariant."
 ---
 
-Cortex is Matrix's per-actor persistent memory store: a Pebble-backed key-value database with a typed memory taxonomy, a salience-ranked query engine, an async embedding pipeline, a Merkle-authenticated snapshot system, and a full replay invariant. Every durable thing an agent knows — facts, preferences, goals, constraints, past events, procedural patterns — lives here.
+Cortex is Matrix's per-actor persistent memory store: a Pebble-backed key-value database with a typed memory taxonomy, a salience-ranked query engine, an async embedding pipeline, a Merkle-authenticated snapshot system, and a full replay invariant. Every durable thing an agent knows, facts, preferences, goals, constraints, past events, procedural patterns, lives here.
 
-This documentation is written for people working on cortex itself — extending the memory types, tuning the salience formula, adding index layers, or understanding how the replay and snapshot machinery works.
+This documentation is written for people working on cortex itself, extending the memory types, tuning the salience formula, adding index layers, or understanding how the replay and snapshot machinery works.
 
 ## Contents
 
@@ -13,16 +13,16 @@ This documentation is written for people working on cortex itself — extending 
 |---|---|
 | [Memory Taxonomy](/reference/cortex/memory-taxonomy) | The 9 typed memory kinds, Head, Version, Forms, Tombstone |
 | [Store & Journal](/reference/cortex/store-and-journal) | Per-actor Pebble DB, key encoding, atomic write batches, journal |
-| [Write API](/reference/cortex/write-api) | `Write`, `Update`, `Tombstone`, `UpdateHead` — mutations and their journal footprint |
-| [Find Query](/reference/cortex/find-query) | The typed query engine — predicates, planner, ordering, graph traversal |
-| [Context Bundle](/reference/cortex/context-bundle) | The three-tier cold-start composer — Pinned, Frame-relevant, Outcomes |
+| [Write API](/reference/cortex/write-api) | `Write`, `Update`, `Tombstone`, `UpdateHead` mutations and their journal footprint |
+| [Find Query](/reference/cortex/find-query) | The typed query engine, predicates, planner, ordering, graph traversal |
+| [Context Bundle](/reference/cortex/context-bundle) | The three-tier cold-start composer, Pinned, Frame-relevant, Outcomes |
 | [Embedder & Vector](/reference/cortex/embedder-and-vector) | Async embedding worker, pure-Go HNSW, `Find Near` / `Find NearURI` |
 | [Edges & Graph](/reference/cortex/edges-and-graph) | Typed edges, `AddEdge`, `RemoveEdge`, bounded BFS |
 | [Snapshot & Proofs](/reference/cortex/snapshot-and-proofs) | Journal MMR, per-namespace SMTs, `OverallRoot`, multi-proofs |
 | [Salience](/reference/cortex/salience) | The 5-factor formula, cold weights, EMA per-actor weight learning |
 | [Attest & Compact](/reference/cortex/attest-and-compact) | Intent attestation, salience feedback, budget-aware compaction |
-| [Scope](/reference/cortex/scope) | Sub-agent `CortexScope` — Merkle-authenticated read/write gating |
-| [Replay](/reference/cortex/replay) | Drop-and-rebuild — the derivability invariant and `Cortex.Rebuild` |
+| [Scope](/reference/cortex/scope) | Sub-agent `CortexScope`, Merkle-authenticated read/write gating |
+| [Replay](/reference/cortex/replay) | Drop-and-rebuild, the derivability invariant and `Cortex.Rebuild` |
 
 ## Repository layout
 
@@ -30,16 +30,16 @@ This documentation is written for people working on cortex itself — extending 
 cortex/
 ├── go.mod
 ├── cortex.go               # top-level facade: Write / Update / Tombstone / Find / Context / Snapshot
-├── attest.go               # Attest — intent-outcome salience feedback + EMA weight update
-├── compact.go              # Compact — budget-aware context compaction + checkpoint records
-├── context.go              # Context — three-tier cold-start bundle composer
+├── attest.go               # Attest, intent-outcome salience feedback + EMA weight update
+├── compact.go              # Compact, budget-aware context compaction + checkpoint records
+├── context.go              # Context, three-tier cold-start bundle composer
 ├── edges.go                # AddEdge / RemoveEdge / GetEdge / IterEdgesOut / IterEdgesIn
 ├── embedder.go             # StartEmbedder / StopEmbedder / DrainEmbedder + HNSW worker
 ├── goal_state.go           # GoalRuntimeState sidecar (ambient scheduler bookkeeping)
 ├── ratelimit.go            # Phase 14 token-bucket DoS guards (scope violations + attests)
-├── rebuild.go              # Cortex.Rebuild facade → replay.Rebuild
+├── rebuild.go              # Cortex.Rebuild facade, delegates to replay.Rebuild
 ├── scope_enforce.go        # VerifyScope / enforceRead / enforceWrite / logScopeViolation
-├── update_head.go          # UpdateHead — Head-only mutations without a Data version bump
+├── update_head.go          # UpdateHead, Head-only mutations without a Data version bump
 ├── keys/
 │   └── keys.go             # all Pebble key constructors + namespace prefixes
 ├── journal/
@@ -53,7 +53,7 @@ cortex/
 │   └── edge.go             # EdgeType, EdgeRecord
 ├── store/
 │   ├── store.go            # Open, Get, PrefixIter, JournalHook, NextSeq
-│   └── writebatch.go       # BeginWrite → AppendJournal → Commit / Abort
+│   └── writebatch.go       # BeginWrite, AppendJournal (multi-entry), Commit / Abort
 ├── salience/
 │   └── salience.go         # Score, ColdScore, ColdScoreWith, Weights, EMA helpers
 ├── forms/
@@ -62,7 +62,7 @@ cortex/
 ├── query/
 │   ├── predicate.go        # Predicate AST: Eq Ne Gt Gte Lt Lte In HasTag Matches And Or Not
 │   ├── eval.go             # field resolver + scalar comparator
-│   ├── find.go             # Run: planner → candidate scan → predicate eval → sort → render
+│   ├── find.go             # Run: planner, candidate scan, predicate eval, sort, render
 │   └── graph.go            # BFS traversal for Query.From / Query.Follow
 ├── embed/
 │   ├── embed.go            # Embedder interface + HashEmbedder (deterministic sha256 stub)
@@ -81,25 +81,26 @@ cortex/
 │   └── errors.go           # ErrViolation, ErrNotWritable, ErrScopeExpired, …
 ├── replay/
 │   ├── replay.go           # Rebuild, Result, Options, VerifyPreservesRoot
+│   ├── rebuild.go          # rebuildMemoriesIndexes, rebuildEdgesSMT, rebuildJournalMMR, rebuildSalienceFromJournal
 │   └── drop.go             # DropDerived, CountDerived
 └── cmd/cortex-shell/       # smoke-test CLI: write/resolve/update/tombstone/find/snapshot
 ```
 
 ## The one-sentence contract
 
-Cortex is the ground truth for all durable agent memory. The context window is a cache; cortex is the disk. Every write is atomically journaled; the journal feeds a Merkle accumulator; snapshots seal the state root. Drop the derived indexes — replay the journal — roots match. That is the invariant everything else depends on.
+Cortex is the ground truth for all durable agent memory. The context window is a cache; cortex is the disk. Every write is atomically journaled; the journal feeds a Merkle accumulator; snapshots seal the state root. Drop the derived indexes, replay the journal, roots match. That is the invariant everything else depends on.
 
 ## Key locked decisions
 
-These decisions are frozen. Don't re-litigate them without a documented protocol-level change.
+These decisions are frozen. Do not re-litigate them without a documented protocol-level change.
 
 | ID | Decision |
 |---|---|
 | **D4** | Cortex holds no key material. Signing lives in the agent runtime or tools layer. |
-| **D11** | Compiler seed = sha256(intent.id \|\| actor \|\| OverallRoot \|\| mtx_digest \|\| model_digest). Same inputs → same output. |
+| **D11** | Compiler seed = sha256(intent.id \|\| actor \|\| OverallRoot \|\| mtx_digest \|\| model_digest). Same inputs produce same output. |
 | **D13** | `#latest` is forbidden at `ParseURI` time. All versions must be pinned before sign-off. |
-| **D17** | One Pebble DB per actor. All namespaces are key prefixes inside that DB — the only way to satisfy §11.1 batch atomicity across journal + head + version + indexes. |
+| **D17** | One Pebble DB per actor. All namespaces are key prefixes inside that DB, the only way to satisfy §11.1 batch atomicity across journal + head + version + indexes. |
 | **D7** | Verb vocabulary is closed at exactly 10 values: `find acquire build modify deliver analyze negotiate schedule monitor delegate`. ObjKind is similarly closed. Extending either requires a journaled migration. |
 | **§8.2** | Pinned memories carry a salience floor of 0.7. Tombstoned memories rank to zero and are filtered upstream. |
-| **§11.1** | Every store mutation — Write, Update, Tombstone, AddEdge, UpdateHead, Compact, Attest — commits journal + primary keys + index keys in a single atomic Pebble batch. A write without a journal entry fails with `ErrBatchNoJournal`. |
+| **§11.1** | Every store mutation, Write, Update, Tombstone, AddEdge, UpdateHead, Compact, Attest, commits journal + primary keys + index keys in a single atomic Pebble batch. A write without a journal entry fails with `ErrBatchNoJournal`. |
 | **Phase 10 Q7** | Sub-agent `UpdateHead` requires `Scope.Writable=true`. Default deny. |

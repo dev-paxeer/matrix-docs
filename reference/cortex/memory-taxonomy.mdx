@@ -1,6 +1,6 @@
 ---
 title: Memory Taxonomy
-description: "The 9 typed memory kinds, the shared Head + Version layout, the three render Forms, and Tombstone semantics — the type system every other cortex subsystem operates on."
+description: "The 9 typed memory kinds, the shared Head + Version layout, the three render Forms, and Tombstone semantics, the type system every other cortex subsystem operates on."
 ---
 
 Package `matrix/cortex/memory` defines the typed record schema for every memory that lives in the cortex. Nine types, a shared `Head` + `Version` structure, auto-generated forms at three granularities, and write-time validation. This is the type system everything else operates on.
@@ -9,7 +9,7 @@ Source files: `cortex/memory/types.go`, `cortex/memory/data.go`, `cortex/memory/
 
 ## Design decisions
 
-**Nine types, closed vocabulary.** The type discriminator is a 1-byte integer. Adding a tenth type is a schema migration, not a code change — existing persisted bytes are tied to the byte values and must not be renumbered.
+**Nine types, closed vocabulary.** The type discriminator is a 1-byte integer (`0x01` through `0x09`). Adding a tenth type is a schema migration, not a code change. Existing persisted bytes are tied to the byte values and must not be renumbered.
 
 **Two-record layout per memory.** `Head` is the mutable record (tags, frames, visibility, tombstone, salience pointer). `Version` is the immutable data record (one per `Write` or `Update`). They share an ID but are stored under separate key prefixes (`m/` and `mv/`) so `UpdateHead` can rewrite `m/<id>` without touching `mv/<id>/v/<n>`.
 
@@ -19,17 +19,29 @@ Source files: `cortex/memory/types.go`, `cortex/memory/data.go`, `cortex/memory/
 
 | Code | Type | Description |
 |---|---|---|
-| `0x01` | `Identity` | Who the actor is — name, DID, profile fields |
+| `0x01` | `Identity` | Who the actor is, name, DID, profile fields |
 | `0x02` | `Fact` | A stated, believed, or observed true thing about the world |
-| `0x03` | `Preference` | A stated like/dislike — topic, polarity, strength |
-| `0x04` | `Belief` | An uncertain or probabilistic claim — stance, confidence |
-| `0x05` | `Event` | A timestamped thing that happened — kind, outcome, counterparty, cost |
-| `0x06` | `Goal` | An objective to pursue — statement, status, horizon |
-| `0x07` | `Constraint` | A standing rule or guardrail — polarity, strength, source |
-| `0x08` | `Capability` | A proven or declared ability — subject, description, verified flag |
-| `0x09` | `Pattern` | A reusable how-to recipe — statement, strength, coverage, predecessors |
+| `0x03` | `Preference` | A stated like/dislike, topic, polarity, strength |
+| `0x04` | `Belief` | An uncertain or probabilistic claim, stance, confidence |
+| `0x05` | `Event` | A timestamped thing that happened, kind, outcome, counterparty, cost |
+| `0x06` | `Goal` | An objective to pursue, statement, status, horizon |
+| `0x07` | `Constraint` | A standing rule or guardrail, polarity, strength, source |
+| `0x08` | `Capability` | A proven or declared ability, subject, description, verified flag |
+| `0x09` | `Pattern` | A reusable how-to recipe, statement, strength, coverage, predecessors |
 
 All nine implement the `TypedData` interface. `memory.TypeOf(data)` returns the type byte for a concrete value.
+
+## ID
+
+Memory IDs are 16-byte binary ULIDs (80 bits of entropy + 48 bits of milliseconds). Textual rendering uses Crockford-base32 via `oklog/ulid`. IDs in Pebble keys are stored as raw 16-byte binary for compact storage and natural byte-sort ordering.
+
+```go
+type ID [16]byte
+
+id := memory.NewID()        // random ULID with current wallclock
+s := id.String()            // Crockford-base32 textual form
+id, err := memory.ParseID(s) // parse textual back to binary
+```
 
 ## Head
 
@@ -39,16 +51,16 @@ All nine implement the `TypedData` interface. `memory.TypeOf(data)` returns the 
 type Head struct {
     ID                 ID
     Type               Type
-    ActorScope         string
-    Visibility         Visibility        // VisPrivate | VisScoped | VisActorPublic
-    Tags               []Tag
-    Frames             []FrameRef        // idx/frame entries — Frame-tier routing
-    DeclaredImportance uint8             // 0..10; feeds salience.D factor
     CurrentVersion     uint64
+    ActorScope         string           // actor name; DID once tools/registry lands
+    Visibility         Visibility       // VisPrivate | VisScoped | VisActorPublic
+    DeclaredImportance uint8            // 0..10; feeds salience.D factor
+    Tags               []Tag            // actor-meaningful labels, max 16, max 64 chars each
+    Tombstoned         *Tombstone       // nil = live
     LastUpdatedAt      time.Time
-    Tombstoned         *Tombstone        // nil = live
-    EmbeddingRef       *VectorRef        // nil until async embedder runs
-    Forms              Forms             // latest short + medium, mirrored from Version
+    EmbeddingRef       *VectorRef       // nil until async embedder runs
+    Forms              Forms            // latest short + medium, mirrored from Version
+    Frames             []FrameRef       // idx/frame entries, Frame-tier routing
 }
 ```
 
@@ -60,9 +72,22 @@ Only `Tags`, `Frames`, `DeclaredImportance`, and `Visibility` are mutable via `U
 
 | Value | Meaning |
 |---|---|
-| `VisPrivate` | Only the actor can read it |
-| `VisScoped` | Readable by sub-agents carrying a valid `CortexScope` that `Allows` this head |
-| `VisActorPublic` | Readable by any agent that can reach this cortex |
+| `VisPrivate` (1) | Only the actor can read it |
+| `VisScoped` (2) | Readable by sub-agents carrying a valid `CortexScope` that `Allows` this head |
+| `VisActorPublic` (3) | Readable by any agent that can reach this cortex |
+
+### VectorRef
+
+Lives on Head so a Find result can decide "embedded?" without fetching `vec/meta`. The full vector bytes live in `VectorMeta` at `vec/meta/<id>`.
+
+```go
+type VectorRef struct {
+    VertexID uint64
+    Model    string     // "<name>@<digest>"
+    Dim      uint16
+    Stale    bool
+}
+```
 
 ## Version
 
@@ -70,21 +95,54 @@ Only `Tags`, `Frames`, `DeclaredImportance`, and `Visibility` are mutable via `U
 
 ```go
 type Version struct {
-    ID         ID
-    Version    uint64
-    Type       Type
-    Data       []byte      // canonical CBOR-encoded typed Data
-    CreatedAt  time.Time
-    CreatedBy  string
-    Confidence float32     // 0..1; 1.0 default
-    Provenance Provenance
-    Hash       [32]byte    // sha256("matrix.cortex.memory.v1" || Type || Data)
-    Forms      Forms
-    FormsOverride bool
+    ID            ID
+    Version       uint64
+    Type          Type
+    Data          []byte      // canonical CBOR-encoded typed Data
+    CreatedAt     time.Time
+    CreatedBy     string
+    ExpiresAt     *time.Time  // optional TTL; nil = no expiry
+    Confidence    float32     // 0..1; 1.0 default
+    Provenance    Provenance
+    Forms         Forms
+    FormsOverride bool        // true if Forms.Short/Medium were skill-supplied
+    Hash          [32]byte    // sha256("matrix.cortex.memory.v1" || Type || Data)
+    ValidFrom     *time.Time  // bi-temporal valid-time start (nil = defaults to CreatedAt)
+    ValidUntil    *time.Time  // bi-temporal valid-time end (nil = still valid)
 }
 ```
 
-Old versions remain readable after `Update` — they are never deleted. The `Resolve(uri)` method requires an explicit version number; `ResolveLatest(id)` is provided for convenience but is discouraged in compiler paths (D13).
+### Bi-temporal valid-time interval
+
+`ValidFrom` and `ValidUntil` form a half-open interval `[ValidFrom, ValidUntil)`. `ValidFrom` defaults to `CreatedAt` when nil; `ValidUntil` is nil for currently-valid assertions. The query engine treats the interval as half-open so a supersession that stamps `ValidUntil = successor.ValidFrom` leaves no overlap at the boundary.
+
+Closing `ValidUntil` on supersession is a NEW journaled Version (via `cortex.CloseValidity`), never an in-place Head mutation, preserving replay byte-safety.
+
+Old versions remain readable after `Update` - they are never deleted. The `Resolve(uri)` method requires an explicit version number; `ResolveLatest(id)` is provided for convenience but is discouraged in compiler paths (D13).
+
+## SourceKind
+
+Tags how a memory entered the cortex:
+
+| Value | Meaning |
+|---|---|
+| `SourceUserInput` | Directly stated by the user |
+| `SourceDerived` | Computed or inferred by the agent |
+| `SourceObserved` | Observed from tool output or environment |
+| `SourceImported` | Imported from external source |
+
+## Provenance
+
+```go
+type Provenance struct {
+    Source       SourceKind
+    DerivedFrom  []string     // matrix://cortex/... URIs
+    Attestations []string
+    SignedBy     []byte       // optional; Phase 2 callers leave nil
+    SignedAt     *time.Time
+    Sig          []byte
+}
+```
 
 ## Data schemas
 
@@ -158,7 +216,7 @@ Three render granularities, computed by `forms.Render`:
 | `Medium` | 200 tokens max | Persisted in Head.Forms + Version.Forms at write time |
 | `Full` | Unbounded | Rendered live on demand by `forms.RenderFull` |
 
-Token budget uses the bytes/4 heuristic (`memory.CountTokens`). Switching to a real BPE tokenizer would change the snapshot hash — it's a spec-level migration.
+Token budget uses the bytes/4 heuristic (`memory.CountTokens`): `tokens = ceil(utf8_bytes / 4)`. Switching to a real BPE tokenizer would change the snapshot hash, it is a spec-level migration.
 
 Per-type short scaffold templates:
 
@@ -192,6 +250,10 @@ type Tombstone struct {
 
 Tombstoned memories keep all their version records (audit trail). `Find` excludes tombstoned memories by default; `Query.IncludeTombstoned=true` opts in. `Update` on a tombstoned memory returns `ErrTombstoned`. Salience is zeroed at tombstone time (factor inputs are preserved for a hypothetical un-tombstone path).
 
+## Tags
+
+Tags are bounded-length actor-meaningful labels. Max 16 tags per memory, max 64 characters per tag. Tags are immutable across `Update`; changing tags requires `UpdateHead`.
+
 ## Verbs and FrameRefs
 
 `Verb` is the closed 10-value enum from D7, stored as a 1-byte integer:
@@ -221,14 +283,27 @@ type FrameRef struct {
 func (fr FrameRef) Hash() [ObjHashSize]byte // sha256(ObjRef)[:16]
 ```
 
-`ObjKind` is also a closed 1-byte enum — the set of object-kind labels the Frame tier recognizes (token, address, skill, tool, etc.).
+`ObjKind` is also a closed 1-byte enum. `FrameRef.Validate()` enforces all three at Write time. Frames are immutable across `Update`; changing frames requires `UpdateHead`.
+
+## Memory and URI
+
+```go
+// Memory is the ergonomic combined view (NOT the on-disk shape)
+type Memory struct {
+    Head    Head
+    Version Version
+}
+
+// URI is the canonical pointer
+type URI string  // matrix://cortex/<Type>/<id>#<version>
+```
 
 ## Modifying the taxonomy
 
 | What to change | Where |
 |---|---|
-| Add or rename a memory type | `memory/types.go` — new `Type` const; `memory/data.go` — new `*Data` struct; `memory/codec.go` — encode/decode switch; `memory/validate.go` — schema rules; `forms/forms.go` — render templates. Requires a journal migration. |
-| Change a data field | `memory/data.go` — bump `SchemaVersion`; update encode/decode; update validate and forms. |
-| Change token budget caps | `memory/types.go` — `MaxShortTokens`, `MaxMediumTokens` |
-| Add a verb | `memory/verb.go` — `Verb` const (append only — never reorder); update idx/frame key scheme. Requires a journal migration. |
-| Add an ObjKind | `memory/verb.go` — `ObjKind` const (append only); update idx/frame key scheme. Requires a migration. |
+| Add or rename a memory type | `memory/types.go` - new `Type` const; `memory/data.go` - new `*Data` struct; `memory/codec.go` - encode/decode switch; `memory/validate.go` - schema rules; `forms/forms.go` - render templates. Requires a journal migration. |
+| Change a data field | `memory/data.go` - bump `SchemaVersion`; update encode/decode; update validate and forms. |
+| Change token budget caps | `memory/types.go` - `MaxShortTokens`, `MaxMediumTokens` |
+| Add a verb | `memory/verb.go` - `Verb` const (append only, never reorder); update idx/frame key scheme. Requires a journal migration. |
+| Add an ObjKind | `memory/verb.go` - `ObjKind` const (append only); update idx/frame key scheme. Requires a migration. |

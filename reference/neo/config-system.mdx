@@ -1,9 +1,9 @@
 ---
 title: "Config System"
-description: "Package matrix/neo/internal/config holds Neo's runtime configuration. The locked operational contract — context-budget thresholds, loop discipline, and the execution surface — c..."
+description: "Package matrix/neo/internal/config holds Neo's runtime configuration. Frozen spec defaults, runtime .kvx overlay, environment precedence, and knobs for the supervisor, swarm, Automatrix, Cassandra, and epistemic core."
 ---
 
-Package `matrix/neo/internal/config` holds Neo's runtime configuration. The locked operational contract — context-budget thresholds, loop discipline, and the execution surface — comes from the frozen design spec at `neo/neo.frozen.kvx` and is encoded as `Default()` values. Deployment wiring is overlaid from an optional runtime `.kvx` file and then from environment variables.
+Package `matrix/neo/internal/config` holds Neo's runtime configuration. The locked operational contract -- context-budget thresholds, loop discipline, and the execution surface -- comes from the frozen design spec at `neo/neo.frozen.kvx` and is encoded as `Default()` values. Deployment wiring (models, cortex location, the daemon URL used for `core_execute` delegation) is overlaid from an optional runtime `.kvx` file and then from environment variables, so a fresh checkout runs with zero config.
 
 Source files: `neo/internal/config/config.go`, `neo/internal/config/kvx.go`.
 
@@ -11,9 +11,9 @@ Source files: `neo/internal/config/config.go`, `neo/internal/config/kvx.go`.
 
 ## Design decisions
 
-**Precedence: Default &lt; runtime .kvx &lt; environment.** A fresh checkout runs with zero config. Deployment-specific values (models, cortex location, daemon URL) are overlaid without touching source.
+**Precedence: Default < runtime .kvx < environment.** A fresh checkout runs with zero config. Deployment-specific values (models, cortex location, daemon URL) are overlaid without touching source.
 
-**Frozen spec defaults.** The `Default()` function encodes the locked operational contract from `neo.frozen.kvx`. Changing these values changes the spec — they are not merely "sensible defaults."
+**Frozen spec defaults.** The `Default()` function encodes the locked operational contract from `neo.frozen.kvx`. Changing these values changes the spec; they are not merely "sensible defaults."
 
 **Missing .kvx is non-fatal.** `Load("/nonexistent/neo.kvx")` returns defaults with no error. This lets dev/CLI runs work unchanged.
 
@@ -23,43 +23,101 @@ Source files: `neo/internal/config/config.go`, `neo/internal/config/kvx.go`.
 
 ```go
 type Config struct {
-    // Identity / runtime wiring
-    AgentName    string // "Neo"
-    CortexRoot   string // "/root/.cortex"
-    CortexActor  string // "neo"
-    DaemonURL    string // "http://127.0.0.1:8080"
-    ManifestPath string // "agents/default.json"
-    SkillsRoot   string // "skills"
+    // --- identity / runtime wiring ---
+    AgentName      string // human label, "Morpheus" (the market identity)
+    CortexRoot     string // root dir of the cortex brain
+    CortexActor    string // actor scope for Neo's memory store
+    DaemonURL      string // base URL of the MCL daemon
+    ManifestPath   string // agent manifest declaring MCP servers
+    SkillsRoot     string // skills corpus root
+    SelfModelGraph string // self-model graph path
 
-    // Models (provider-qualified ids)
-    MainModel  string // "Qwen/Qwen3.7-Max"
-    CheapModel string // "accounts/fireworks/routers/glm-5p1-fast"
-    EmbedModel string // "nomic-ai/nomic-embed-text-v1.5"
+    // --- models (provider-qualified ids) ---
+    MainModel           string // the conversational tool-calling loop
+    CheapModel          string // compaction + summary validation + cheap relation-classify
+    ConsolidationModel  string // durable-learning extraction (stronger than CheapModel)
+    EmbedModel          string // semantic page-fault embeddings
+    CassandraModel      string // cheap/fast Cassandra completeness auditor
+    CassandraEscalateModel string // stronger second-opinion for low-certainty audits
 
-    // Memory budget
-    ContextWindowTokens   int // 256000
-    SoftPct               int // 80
-    HardPct               int // 92
-    RetrievalTopK         int // 8
-    RetrievalBudgetTokens int // 6000
-    PinnedBudgetTokens    int // 2000
-    RecallTopK            int // 6
-    RecallBudgetTokens    int // 2500
+    // --- memory budget (context window = RAM; cortex = disk) ---
+    ContextWindowTokens    int  // total model context window
+    SoftPct                int  // cooperative compaction threshold (default 80)
+    HardPct                int  // forced compaction threshold (default 92)
+    RetrievalTopK          int  // page-fault: top-K cortex records (default 8)
+    RetrievalBudgetTokens  int  // token ceiling for retrieved records (default 6000)
+    PinnedBudgetTokens     int  // pinned block ceiling (default 2000)
+    AmbientRetrievalTopK   int  // ambient memory seed per turn (0 = fully tool-driven)
+    FirstTurnRelevancePush bool // push relevance-matched memory on turn 1
+    WarmOnOpen             bool // warm embedder + HNSW on first HTTP request
 
-    // Loop discipline
-    StepBudget        int // 50
-    NoProgressStall   int // 4
-    MaxRetriesPerTool int // 3
-    MaxAdaptAttempts  int // 2
+    // --- loop discipline ---
+    StepBudget               int  // max tool-call iterations per turn (default 50)
+    StepBudgetMin             int  // adaptive floor (0 = adaptation disabled)
+    StepBudgetMax             int  // adaptive ceiling (defaults to StepBudget)
+    NoProgressStall           int  // identical-failing-call count that trips stall (default 4)
+    SemanticStallSimilarityPct int // word-overlap % for semantic stall detection (0 = disabled)
+    MaxRetriesPerTool         int  // recovery ladder rung 1 (default 3)
+    MaxAdaptAttempts          int  // recovery ladder rung 2 (default 2)
+    MaxGuidanceNudges         int  // consecutive system-guidance nudge cap (0 = unbounded)
 
-    // Procedural memory guards
-    MinPatternSuccesses int // 3
+    // --- sub-agent swarm ---
+    MaxSubagents           int  // hard cap per spawn_subagents call
+    MaxConcurrentSubagents int  // semaphore: how many run at once
+    SubagentStepBudget     int  // per-sub-agent step budget
 
-    // Execution surface
+    // --- browser filmstrip ---
+    BrowserAutoshot     bool // auto-capture after view-changing actions
+    BrowserAutoshotMax  int  // max captures per run
+    MediaRetentionHours int  // media GC sweep age (0 = disabled)
+
+    // --- task supervisor ---
+    SuperviseTasks     bool          // master switch: wrap turns in persistent supervisor
+    TaskMaxWall        time.Duration // hard wall-clock ceiling for one supervised task
+    TaskAttemptTimeout time.Duration // ceiling for a single supervised attempt
+    TaskMaxRespawns    int           // max fresh-agent respawns before honest partial
+
+    // --- self-model death consolidation ---
+    DeathConsolidateEvery int // cadence for self-authoring failure-pattern pass
+
+    // --- procedural memory guards ---
+    MinPatternSuccesses int // successes before a pattern is injected (default 3)
+
+    // --- cassandra 2.0 (silent-voice controller) ---
+    CassandraEnabled          bool
+    CassandraMinStep          int  // first step a mod may fire (default 2)
+    CassandraMaxModsPerTurn   int  // total modifications per turn (default 3)
+    CassandraLoopThreshold    int  // repeat count that arms doubt side
+    CassandraCooldownSteps    int  // min steps between same-trigger mods (default 2)
+
+    // --- epistemic core ---
+    EpistemicPremises           bool // premise ledger + check-before-act gate
+    EpistemicPredictions        bool // prediction-carrying dispatch
+    EpistemicMismatchLimit      int  // consecutive mismatch count for revision (default 3)
+    EpistemicConvergenceWindow  int  // actions without evidence growth (default 4)
+
+    // --- heartbeat ---
+    HeartbeatInterval int // recurring-alarm interval in minutes (0 = disabled)
+
+    // --- MCP tool result cache + parallel dispatch ---
+    MCPCacheTTL            time.Duration // TTL for idempotent-read cache (0 = disabled)
+    ToolDispatchConcurrency int          // concurrent independent tool calls (0 = serial)
+
+    // --- automatrix (proactive surprise tasks) ---
+    AutomatrixEnabled             bool
+    AutomatrixBaseIntervalMinutes int
+    AutomatrixJitterMinutes       int
+    AutomatrixMaxTasksPerDay      int
+    AutomatrixMinConfidence       float32
+    NtfyServer                    string
+    NtfyTopic                     string
+    AppriseURL                    string
+
+    // --- execution surface ---
     NaturalAllow    []string // reversible actions
     EscalateActions []string // money-moving actions
 
-    // LLM transport
+    // --- LLM transport ---
     GatewayURL string // optional metered gateway
     ActorDID   string // actor DID for gateway headers
 }
@@ -75,9 +133,9 @@ cfg, err := config.Load(path) // path may be "" or missing
 
 ### Precedence
 
-1. `Default()` — frozen spec values
-2. Runtime `.kvx` file — overlays defaults
-3. Environment variables — highest precedence
+1. `Default()` - frozen spec values
+2. Runtime `.kvx` file, overlays defaults
+3. Environment variables, highest precedence
 
 ### Environment variables
 
@@ -85,6 +143,7 @@ cfg, err := config.Load(path) // path may be "" or missing
 |---|---|
 | `NEO_MAIN_MODEL` | `MainModel` |
 | `NEO_CHEAP_MODEL` | `CheapModel` |
+| `NEO_CONSOLIDATION_MODEL` | `ConsolidationModel` |
 | `NEO_EMBED_MODEL` | `EmbedModel` |
 | `NEO_CORTEX_ROOT` | `CortexRoot` |
 | `NEO_CORTEX_ACTOR` | `CortexActor` |
@@ -94,6 +153,25 @@ cfg, err := config.Load(path) // path may be "" or missing
 | `NEO_ACTOR_DID` | `ActorDID` |
 | `MATRIX_GATEWAY_URL` | `GatewayURL` (also `NEO_GATEWAY_URL`) |
 | `NEO_CONTEXT_WINDOW_TOKENS` | `ContextWindowTokens` |
+| `NEO_STEP_BUDGET` | `StepBudget` |
+| `NEO_STEP_BUDGET_MIN` | `StepBudgetMin` |
+| `NEO_STEP_BUDGET_MAX` | `StepBudgetMax` |
+| `NEO_NO_PROGRESS_STALL` | `NoProgressStall` |
+| `NEO_MAX_SUBAGENTS` | `MaxSubagents` |
+| `NEO_MAX_CONCURRENT_SUBAGENTS` | `MaxConcurrentSubagents` |
+| `NEO_SUBAGENT_STEP_BUDGET` | `SubagentStepBudget` |
+| `NEO_SUPERVISE_TASKS` | `SuperviseTasks` |
+| `NEO_TASK_MAX_WALL` | `TaskMaxWall` |
+| `NEO_TASK_MAX_RESPAWNS` | `TaskMaxRespawns` |
+| `NEO_CASSANDRA_ENABLED` | `CassandraEnabled` |
+| `NEO_EPISTEMIC_PREMISES` | `EpistemicPremises` |
+| `NEO_HEARTBEAT_INTERVAL` | `HeartbeatInterval` |
+| `NEO_AUTOMATRIX_ENABLED` | `AutomatrixEnabled` |
+| `NEO_AUTOMATRIX_INTERVAL` | `AutomatrixBaseIntervalMinutes` |
+| `NEO_AUTOMATRIX_MAX_PER_DAY` | `AutomatrixMaxTasksPerDay` |
+| `NEO_MCP_CACHE_TTL_SECONDS` | `MCPCacheTTL` |
+| `NEO_TOOL_DISPATCH_CONCURRENCY` | `ToolDispatchConcurrency` |
+| `NEO_CONVERSATION_RETAINED_TURNS` | retained-turn cap |
 
 ---
 
@@ -139,7 +217,12 @@ func (c Config) HardBudgetTokens() int // ContextWindowTokens * HardPct / 100
 
 | What to change | Where |
 |---|---|
-| Frozen spec defaults | `config/config.go` — `Default()` |
-| New env variable | `config/config.go` — `applyEnv()` |
-| New .kvx section/key | `config/config.go` — `applyDoc()` + `kvx.go` accessors |
-| Execution surface lists | `config/config.go` — `NaturalAllow`, `EscalateActions` |
+| Frozen spec defaults | `config/config.go` - `Default()` |
+| New env variable | `config/config.go` - `applyEnv()` |
+| New .kvx section/key | `config/config.go` - `applyDoc()` + `kvx.go` accessors |
+| Execution surface lists | `config/config.go` - `NaturalAllow`, `EscalateActions` |
+| Supervisor knobs | `config/config.go` - `SuperviseTasks`, `TaskMaxWall`, `TaskMaxRespawns` |
+| Swarm knobs | `config/config.go` - `MaxSubagents`, `MaxConcurrentSubagents`, `SubagentStepBudget` |
+| Automatrix knobs | `config/config.go` - `AutomatrixEnabled`, `AutomatrixBaseIntervalMinutes`, etc. |
+| Cassandra knobs | `config/config.go` - `CassandraEnabled`, `CassandraLoopThreshold`, etc. |
+| Epistemic knobs | `config/config.go` - `EpistemicPremises`, `EpistemicPredictions`, etc. |

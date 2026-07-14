@@ -1,6 +1,6 @@
 ---
 title: "Find Query"
-description: "Package matrix/cortex/query implements the typed Find query engine described in §12. cortex.Find is a thin facade that resolves near-vectors and delegates to query.Run. The engi..."
+description: "Package matrix/cortex/query implements the typed Find query engine described in §12. Predicates, planner, ordering, graph traversal, and budget-aware rendering."
 ---
 
 Package `matrix/cortex/query` implements the typed `Find` query engine described in §12. `cortex.Find` is a thin facade that resolves near-vectors and delegates to `query.Run`. The engine handles typed predicates, secondary-index candidate selection, salience-ranked ordering, budget-aware rendering, and bounded BFS graph traversal.
@@ -11,9 +11,9 @@ Source files: `cortex/query/find.go`, `cortex/query/predicate.go`, `cortex/query
 
 ## Design decisions
 
-**Unbounded queries are rejected.** Every `Find` must set either `Limit` or `BudgetTokens`. No `Limit` AND no `BudgetTokens` → `ErrUnbounded`. This is a load-bearing OOM guard.
+**Unbounded queries are rejected.** Every `Find` must set either `Limit` or `BudgetTokens`. No `Limit` AND no `BudgetTokens` returns `ErrUnbounded`. This is a load-bearing OOM guard.
 
-**Full-store scans are rejected.** A query with neither a `Type` filter nor a `HasTag` predicate → `ErrTooBroad`. The engine requires at least one narrowing criterion before scanning.
+**Full-store scans are rejected.** A query with neither a `Type` filter nor a `HasTag` predicate returns `ErrTooBroad`. The engine requires at least one narrowing criterion before scanning.
 
 **Salience is the default order.** When no `OrderBy` is specified (and no `Near` is set), results are ranked by the live cold-score descending. OrderBy clauses override this. A ULID-ascending tiebreak ensures deterministic ordering across runs.
 
@@ -25,22 +25,50 @@ Source files: `cortex/query/find.go`, `cortex/query/predicate.go`, `cortex/query
 
 ```go
 type Query struct {
-    Type            []memory.Type    // union; at least one required (unless HasTag used)
-    Where           Predicate        // optional typed predicate tree
-    OrderBy         []OrderClause    // default: salience desc
-    Limit           int              // cap on result count
-    Offset          int              // for pagination
-    BudgetTokens    int              // cap on rendered token sum; requires Form to be set
-    Form            FormKind         // "short" | "medium" | "full"
-    IncludeTombstoned bool           // default false
-    LateBinding     bool             // D13: journal a KindFind entry for audit
-    Near            string           // text → vector → HNSW nearest neighbors
-    NearURI         *memory.URI      // memory → embedding → HNSW nearest neighbors
-    From            *memory.ID       // entry point for graph traversal
-    Follow          *EdgeExpr        // BFS edge filter
-    Scope           *scope.Scope     // Phase 10: sub-agent read gating
+    Type              []memory.Type    // union; at least one required (unless HasTag used)
+    Where             Predicate        // optional typed predicate tree
+    OrderBy           []OrderClause    // default: salience desc
+    Limit             int              // cap on result count
+    Offset            int              // for pagination
+    BudgetTokens      int              // cap on rendered token sum
+    Form              FormKind         // "short" | "medium" | "full"
+    IncludeTombstoned bool             // default false
+    LateBinding       bool             // D13: journal a KindFind entry for audit
+
+    // Vector search fields
+    Near       string        // text -> embed -> HNSW nearest neighbors
+    NearURI    *memory.URI   // existing memory -> embedding -> HNSW nearest neighbors
+    NearVector []float32     // pre-computed query vector (advanced callers)
+    NearIndex  *vector.Index // HNSW handle (cortex.Find threads this in)
+    NearK      int           // HNSW overshoot factor; default 4*Limit
+
+    // Graph traversal fields
+    From    *memory.URI     // entry vertex for BFS traversal
+    Follow  *EdgeExpr       // BFS edge filter; nil with From = "one hop out, any edge"
+
+    // Sub-agent scope (Phase 10)
+    Scope   *scope.Scope    // if set, VerifyScope runs once; per-candidate Allows filter
+
+    // Ranking mode (v3)
+    RankMode RankMode       // RankSalience (default) vs RankDistance for Near queries
+
+    // Bi-temporal valid-time filter (v3)
+    AsOf    *time.Time      // nil = "now"; candidates outside [ValidFrom, ValidUntil) dropped
 }
 ```
+
+### RankMode
+
+`RankMode` selects how Near/semantic queries are ranked:
+
+- `RankSalience` (zero value, default): ranks Near candidates by utility-keyed salience including the recovered vector term (`salience.ColdScoreWithV`), ordered by `OrderSalience` desc. HNSW supplies the candidate recall set; salience supplies the ranking. "Did this memory help" outranks "is this similar".
+- `RankDistance` (`"rank_distance"`): one-flag rollback to pre-v3 behavior. Score Near candidates with pure-utility `salience.ColdScoreWith` and order by ascending HNSW distance (closest first).
+
+`RankMode` has no effect on non-Near queries (those already default to `OrderSalience` desc) nor on calls that supply an explicit `OrderBy`.
+
+### AsOf (bi-temporal valid-time)
+
+`AsOf` is the valid-time instant the query reads against. nil defaults to "now": a candidate is dropped when `AsOf` falls outside its half-open valid interval `[ValidFrom, ValidUntil)` or at/after its `ExpiresAt`, so the caller never acts on a superseded or expired truth. Setting `AsOf` to a past instant answers "what was true at T". The filter is read-time only and has zero replay impact. Graph traversals (`From` set) and `IncludeTombstoned` audits bypass the filter so supersession provenance and "what changed" answers stay reachable.
 
 ---
 
@@ -49,25 +77,28 @@ type Query struct {
 `Run` chooses the candidate set before evaluating `Where`:
 
 ```
-1. If Where contains HasTag predicates reachable through pure And-conjunction:
-   → scan idx/tag/<sha256(tag)[:8]>/… for each; INTERSECT candidate IDs
+1. If NearVector + NearIndex are set:
+   -> HNSW top-K search -> candidates ordered by distance
 
-2. Else if Type is set:
-   → scan idx/type/<t>/… for each; UNION candidate IDs
+2. Else if From is set (graph traversal):
+   -> BFS from From via Follow edges -> collect reachable IDs
 
-3. Else if From is set (graph traversal):
-   → BFS from From via Follow edges; collect reachable IDs
+3. Else if Where contains HasTag predicates reachable through pure And-conjunction:
+   -> scan idx/tag/<sha256(tag)[:8]>/… for each; INTERSECT candidate IDs
 
-4. Else → ErrTooBroad
+4. Else if Type is set:
+   -> scan idx/type/<t>/… for each; UNION candidate IDs
+
+5. Else -> ErrTooBroad
 ```
 
-Each candidate ID is then point-read (`m/<id>` + `mv/<id>/v/<n>`), decoded, and evaluated against `Where`. Tombstoned candidates are excluded unless `IncludeTombstoned=true`.
+Each candidate ID is then point-read (`m/<id>` + `mv/<id>/v/<n>`), decoded, and evaluated against `Where`. Tombstoned candidates are excluded unless `IncludeTombstoned=true`. Candidates outside the `AsOf` valid-time interval are excluded (unless graph traversal or tombstoned audit mode).
 
 ---
 
 ## Predicates
 
-The predicate AST is a closed interface — no way to synthesize predicate types outside the package.
+The predicate AST is a closed interface, no way to synthesize predicate types outside the package.
 
 | Predicate | Description |
 |---|---|
@@ -75,7 +106,7 @@ The predicate AST is a closed interface — no way to synthesize predicate types
 | `Ne{Field, Value}` | Field does not equal Value |
 | `Gt / Gte / Lt / Lte` | Ordered comparison (numeric, time.Time, string lexicographic) |
 | `In{Field, Values}` | Field equals any of Values |
-| `HasTag{Tag}` | Memory has this tag — also drives the idx/tag planner path |
+| `HasTag{Tag}` | Memory has this tag, also drives the idx/tag planner path |
 | `Matches{Field, Pattern}` | Field matches Go regexp pattern |
 | `And{Children}` | All children true; empty And = vacuously true |
 | `Or{Children}` | Any child true; empty Or = vacuously false |
@@ -85,7 +116,7 @@ The predicate AST is a closed interface — no way to synthesize predicate types
 
 ```
 head.<name>       -- Head struct fields (id, type, actor_scope, visibility, declared_importance, …)
-version.<name>    -- Version fields (created_at, confidence, provenance_kind, …)
+version.<name>    -- Version fields (created_at, confidence, provenance_source, valid_from, valid_until, …)
 data.<name>       -- Type-specific Data fields (subject, predicate, statement, topic, polarity, stance, …)
 ```
 
@@ -105,11 +136,19 @@ result, err := c.Find(query.Query{
     Form:  query.FormMedium,
 })
 
-// Find semantically similar memories
+// Find semantically similar memories, ranked by salience (default)
 result, err := c.Find(query.Query{
     Type:  []memory.Type{memory.TypeFact, memory.TypeEvent},
     Near:  "latest block height",
     Limit: 5,
+})
+
+// Find closest neighbors by distance (pre-v3 rollback)
+result, err := c.Find(query.Query{
+    Type:     []memory.Type{memory.TypeFact},
+    Near:     "latest block height",
+    Limit:    5,
+    RankMode: query.RankDistance,
 })
 ```
 
@@ -119,12 +158,15 @@ result, err := c.Find(query.Query{
 
 ```go
 type Result struct {
-    Memories        []*memory.Memory  // ordered survivors
-    Rendered        []string          // parallel-indexed rendered forms (when Form set)
-    RenderedTokens  []int             // parallel-indexed token counts (audit)
-    TrimmedByBudget int               // how many were dropped by BudgetTokens enforcement
-    Scores          []float32         // parallel-indexed salience scores (debug/audit)
-    HopDistances    []int             // parallel-indexed hop counts (graph traversal only)
+    Memories        []*memory.Memory       // ordered survivors
+    Rendered        []string               // parallel-indexed rendered forms (when Form set)
+    RenderedTokens  []int                  // parallel-indexed token counts (audit)
+    TrimmedByBudget int                    // count dropped by BudgetTokens enforcement
+    Scores          map[memory.ID]float32  // salience scores at query time (debug)
+    Distances       map[memory.ID]float32  // HNSW distances when Near/NearURI active
+    Hops            map[memory.ID]int      // BFS hop counts when From active
+    CandidatesScanned int                 // count BEFORE Where evaluation
+    Total           int                    // count after Where + tombstone filter, before Offset/Limit
 }
 ```
 
@@ -134,12 +176,12 @@ type Result struct {
 
 ```go
 type OrderClause struct {
-    Field     OrderField   // "salience" | "version.created_at" | "head.last_updated_at" | "head.declared_importance" | "near.distance" | "hop"
+    Field     OrderField     // "salience" | "version.created_at" | "head.last_updated_at" | "head.declared_importance" | "near.distance" | "hop"
     Direction OrderDirection // "asc" | "desc"
 }
 ```
 
-When `Near`/`NearURI` is active and no explicit `OrderBy` is given, the default order is `near.distance asc` (closest vector first). When `From`/`Follow` is active, the default is `hop asc` (closest in the graph first).
+When `Near`/`NearURI` is active and `RankMode` is `RankSalience` (default), ordering is `OrderSalience` desc. When `RankMode` is `RankDistance` or no explicit `OrderBy` is given, the default is `near.distance asc` (closest vector first). When `From`/`Follow` is active, the default is `hop asc` (closest in the graph first).
 
 ---
 
@@ -153,7 +195,7 @@ When `BudgetTokens > 0`:
 4. At least one entry is always retained.
 5. `Result.TrimmedByBudget` reports the count dropped.
 
-This is the same "salience-based trim" used by `Context` — the lowest-signal memories are the first to go.
+This is the same "salience-based trim" used by `Context` - the lowest-signal memories are the first to go.
 
 ---
 
@@ -171,11 +213,11 @@ type EdgeExpr struct {
 }
 ```
 
-BFS visits neighbors in byte-ascending (edge_type, dst-or-src) order — the same order Pebble surfaces them — so traversal results are reproducible across runs. Cycles terminate because every visited ID is marked before its neighbors expand.
+BFS visits neighbors in byte-ascending (edge_type, dst-or-src) order, the same order Pebble surfaces them, so traversal results are reproducible across runs. Cycles terminate because every visited ID is marked before its neighbors expand.
 
 `MaxHopsCap = 6` is a hard ceiling regardless of what the caller sets. It mirrors the skill-composition depth cap.
 
-The result IDs from BFS are then filtered through the same `Where` + `Type` + tombstone logic as regular Find candidates. `Result.HopDistances` is populated with the BFS hop count per surviving memory.
+The result IDs from BFS are then filtered through the same `Where` + `Type` + tombstone logic as regular Find candidates. `Result.Hops` is populated with the BFS hop count per surviving memory.
 
 ---
 
@@ -191,15 +233,15 @@ result, err := c.Find(query.Query{
 })
 ```
 
-When `LateBinding=true`, `Run` appends a `KindFind` journal entry recording the predicate string, types scanned, tags used, and result count. This does NOT affect the `OverallRoot` in a harmful way — it is an intended audit entry.
+When `LateBinding=true`, `Run` appends a `KindFind` journal entry recording the predicate string, types scanned, tags used, result count, and `AccessedIDs[]`. The `AccessedIDs` field is used by the replay harness to re-apply `salience.BumpForAccess` calls deterministically.
 
-Compile-time `Find` (at stage-3 context pre-fetch time) MUST use `LateBinding=false` (the default) so no journal entry is emitted and the snapshot root doesn't move unexpectedly.
+Compile-time `Find` (at stage-3 context pre-fetch time) MUST use `LateBinding=false` (the default) so no journal entry is emitted, no `AccessCount` bumps fire, and the snapshot root does not move unexpectedly.
 
 ---
 
 ## Scope gating
 
-When `Query.Scope` is set, `VerifyScope` runs once at `Find` entry. Per-candidate filtering applies `Scope.Allows(&head)` silently — `Find` is a multi-target read and does not journal per-candidate violations (unlike `ResolveScoped` which does).
+When `Query.Scope` is set, `VerifyScope` runs once at `Find` entry. Per-candidate filtering applies `Scope.Allows(&head)` silently - `Find` is a multi-target read and does not journal per-candidate violations (unlike `ResolveScoped` which does).
 
 ---
 
@@ -207,8 +249,9 @@ When `Query.Scope` is set, `VerifyScope` runs once at `Find` entry. Per-candidat
 
 | What to change | Where |
 |---|---|
-| Add a predicate type | `query/predicate.go` — implement `Predicate` interface; `query/eval.go` — handle in `evalPredicate` |
-| Add a sortable field | `query/find.go` — `OrderField` const + sort comparator in `sortResults` |
-| Change BFS depth cap | `query/find.go` — `MaxHopsCap` constant |
-| Add a field resolver | `query/eval.go` — `dataField` per-type switch |
-| Change unbounded guard | `query/find.go` — `ErrUnbounded` / `ErrTooBroad` checks |
+| Add a predicate type | `query/predicate.go` - implement `Predicate` interface; `query/eval.go` - handle in `evalPredicate` |
+| Add a sortable field | `query/find.go` - `OrderField` const + sort comparator in `sortResults` |
+| Change BFS depth cap | `query/find.go` - `MaxHopsCap` constant |
+| Add a field resolver | `query/eval.go` - `dataField` per-type switch |
+| Change unbounded guard | `query/find.go` - `ErrUnbounded` / `ErrTooBroad` checks |
+| Change valid-time filter behavior | `query/find.go` - `AsOf` filter in candidate loop |

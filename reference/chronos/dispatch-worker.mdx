@@ -1,55 +1,58 @@
 ---
 title: "Dispatch Worker"
-description: "Package chronos/internal/dispatch is the durable poll-and-claim worker that fires due alarms. Single instance now, HA-ready by construction — the DB claim uses FOR UPDATE SKIP L..."
+description: "The dispatch worker is the durable poll-and-claim loop that fires due alarms. It uses FOR UPDATE SKIP LOCKED for safe concurrent claiming and implements a retry ladder with exponential backoff."
 ---
 
-Package `chronos/internal/dispatch` is the durable poll-and-claim worker that fires due alarms. Single instance now, HA-ready by construction — the DB claim uses `FOR UPDATE SKIP LOCKED` plus a lease, so adding workers never double-fires.
+The dispatch worker is the durable poll-and-claim loop that fires due alarms. It is designed HA-ready by construction: the database claim uses `FOR UPDATE SKIP LOCKED` with a lease, so adding workers never double-fires.
 
 Source file: `internal/dispatch/dispatch.go`.
 
 ---
 
-## Design decisions
+## Worker struct
 
-**The DB is the source of truth; the ticker is just a heartbeat.** The worker polls on a short interval (default 1s) but the claim query is what actually determines which alarms are due. There is no in-memory timer heap.
+```go
+type Worker struct {
+    store       *store.Store
+    waker       wake.Waker
+    log         *slog.Logger
+    tick        time.Duration   // poll interval (default 1s)
+    lease       time.Duration   // claim lease (default 2min)
+    batch       int             // max alarms per tick (default 100)
+    maxFailures int             // default retry ceiling (default 5)
+}
+```
 
-**At-least-once delivery.** A fire is recorded only AFTER the router confirms the wake. A crash mid-fire leaves the lease, which expires and is reclaimed — the alarm will fire again.
-
-**HA by construction.** `FOR UPDATE SKIP LOCKED` means concurrent workers (now or future) never claim the same row. The lease (`claimed_at`) prevents a crashed worker from permanently locking rows.
+The `waker` field is a `wake.Waker` interface, which abstracts the delivery mechanism. The concrete implementation is `wake.HTTPWaker` which POSTs to the router's `/internal/wake` endpoint.
 
 ---
 
-## The poll loop
+## Poll loop
 
+The `Run` method polls until the context is cancelled. The database is the source of truth; the ticker is just a heartbeat:
+
+```go
+func (w *Worker) Run(ctx context.Context) {
+    ticker := time.NewTicker(w.tick)
+    defer ticker.Stop()
+    for {
+        select {
+        case <-ctx.Done():
+            return
+        case <-ticker.C:
+            w.tickOnce(ctx)
+        }
+    }
+}
 ```
-┌──────────────────┐
-│  ticker fires    │  Every Tick (default 1s)
-└────────┬─────────┘
-         ▼
-┌──────────────────┐
-│  ClaimDue        │  SELECT … FOR UPDATE SKIP LOCKED
-│  (batch, lease)  │  Claims up to `batch` due alarms
-└────────┬─────────┘
-         ▼
-┌──────────────────┐
-│  for each alarm  │
-│  fire(alarm)     │
-└────────┬─────────┘
-         ▼
-┌──────────────────┐
-│  waker.Wake()    │  POST /internal/wake to router
-└────────┬─────────┘
-    ┌────┴────┐
-    ▼         ▼
- success    failure
-    │         │
-    ▼         ▼
-onSuccess  onFailure
-```
+
+On each tick, `tickOnce` calls `store.ClaimDue` to atomically lease up to `batch` active alarms whose `next_fire_at` has passed and that are not currently leased.
 
 ---
 
-## Claim query
+## Claim mechanism
+
+`ClaimDue` uses a `FOR UPDATE SKIP LOCKED` subquery to safely claim due alarms:
 
 ```sql
 UPDATE alarms SET claimed_at = now(), updated_at = now()
@@ -62,65 +65,89 @@ WHERE id IN (
     LIMIT $2
     FOR UPDATE SKIP LOCKED
 )
-RETURNING …
+RETURNING <alarm columns>
 ```
 
 Key properties:
-- Only `active` alarms with `next_fire_at` in the past are claimed
-- The lease check (`claimed_at < now() - lease`) prevents re-claiming an alarm that another worker is currently delivering
-- `FOR UPDATE SKIP LOCKED` is the HA primitive — no two workers can claim the same row
-- `ORDER BY next_fire_at` ensures oldest-due fires first
+
+| Property | Mechanism |
+|---|---|
+| No double-fire | `FOR UPDATE SKIP LOCKED` prevents concurrent workers from claiming the same alarm |
+| Crash recovery | A crash mid-fire leaves the lease; it expires after `lease` duration and is reclaimed |
+| At-least-once | A crash after the wake is delivered but before `MarkFired`/`Reschedule` means the alarm will be reclaimed and re-delivered |
+| Ordered | `ORDER BY next_fire_at` ensures the most overdue alarms are processed first |
 
 ---
 
-## Fire outcomes
+## Fire flow
 
-### Success path
+For each claimed alarm, the worker calls the waker:
 
-```
-fire success
-    │
-    ├── kind=once ──► MarkFired (status='fired', retained for audit)
-    │
-    └── kind=cron ──► NextCron(expr, tz, now)
-                      │
-                      ├── valid next ──► Reschedule (advance next_fire_at)
-                      │
-                      └── no future ──► MarkFired (retire the series)
-```
-
-### Failure path — the retry ladder
-
-```
-fire failure
-    │
-    ├── failure_count < max_failures
-    │       │
-    │       └── RecordRetry: backoff(next_fire_at = now + backoff(failures))
-    │           The alarm stays active; the worker will claim it again after the backoff.
-    │
-    └── failure_count >= max_failures
-            │
-            ├── kind=once ──► MarkFailed (status='failed', last_error recorded)
-            │                 Terminal. Never retried.
-            │
-            └── kind=cron ──► RescheduleAfterFailure (skip-and-advance)
-                              Advances next_fire_at past the bad fire so one
-                              failure does not wedge the whole series.
+```go
+func (w *Worker) fire(ctx context.Context, a types.Alarm) {
+    err := w.waker.Wake(ctx, wake.Request{
+        UserID:         a.UserID,
+        ConversationID: a.ConversationID,
+        Message:        a.WakeMessage,
+        Payload:        a.Payload,
+        AlarmID:        a.ID,
+    })
+    if err == nil {
+        w.onSuccess(ctx, a, now)
+        return
+    }
+    w.onFailure(ctx, a, now, err.Error())
+}
 ```
 
 ---
 
-## Backoff
+## Success path
 
-Exponential backoff starting at 30s, doubling each failure, capped at 15 minutes:
+On a successful wake delivery:
+
+| Kind | Action |
+|---|---|
+| `once` | `MarkFired`: sets status to `fired`, clears `claimed_at`, records `last_fired_at` |
+| `cron` | `Reschedule`: computes `NextCron` from now, updates `next_fire_at`, clears `claimed_at`, resets `failure_count` to 0 |
+
+If a `cron` alarm's expression yields no future time, it is retired by marking `fired`.
+
+---
+
+## Failure path (retry ladder)
+
+On a failed wake delivery, the worker applies a three-tier retry ladder:
+
+### Tier 1: Retry (attempts < ceiling)
+
+If `failure_count + 1 < max_failures` (per-alarm or server default), the alarm is re-armed with a backoff delay:
+
+```go
+retryAt := now.Add(backoff(a.FailureCount))
+store.RecordRetry(ctx, a.ID, retryAt, errMsg)
+```
+
+The backoff is exponential: `30s * 2^failureCount`, capped at 15 minutes.
+
+### Tier 2: Permanently fail (once, retries exhausted)
+
+For `once` alarms where retries are exhausted, `MarkFailed` sets status to `failed`. The alarm is retained for audit and is never silently dropped (invariant i6).
+
+### Tier 3: Skip-and-advance (cron, retries exhausted)
+
+For `cron` alarms where retries are exhausted, `RescheduleAfterFailure` advances `next_fire_at` to the next occurrence. One bad fire does not wedge the series. The error is retained in `last_error` for observability.
+
+---
+
+## Exponential backoff
 
 ```go
 func backoff(failureCount int) time.Duration {
-    d := 30 * time.Second
+    d := 30 * time.Second       // retryBaseBackoff
     for i := 0; i < failureCount; i++ {
         d *= 2
-        if d >= 15 * time.Minute {
+        if d >= 15 * time.Minute {  // retryMaxBackoff
             return 15 * time.Minute
         }
     }
@@ -130,45 +157,9 @@ func backoff(failureCount int) time.Duration {
 
 | Failure count | Backoff |
 |---|---|
-| 0 (first retry) | 30s |
-| 1 | 1m |
-| 2 | 2m |
-| 3 | 4m |
-| 4 | 8m |
-| 5+ | 15m (capped) |
-
----
-
-## Config tunables
-
-| Config key | Default | Meaning |
-|---|---|---|
-| `Tick` | 1s | Poll interval |
-| `Lease` | 2m | How long a claimed alarm stays leased before another worker may reclaim it |
-| `Batch` | 100 | Max alarms claimed per tick |
-| `MaxFailures` | 5 | Default wake-delivery retry ceiling per alarm |
-
-These are set via `dispatch.Config` and resolved from environment variables or the kvx overlay (see [Config System](./config-system.md)).
-
----
-
-## Worker lifecycle
-
-```go
-func (w *Worker) Run(ctx context.Context)
-```
-
-Blocks until `ctx` is cancelled. The ticker is the only goroutine — all work is synchronous within each tick. A `ctx.Err() != nil` check between alarms in a batch allows clean shutdown mid-batch.
-
-The worker is spawned as a goroutine in `main()`:
-
-```go
-worker := dispatch.New(st, waker, log, dispatch.Config{…})
-go worker.Run(ctx)
-```
-
----
-
-## Honest failure (invariant i6)
-
-Every failure path records `last_error` on the alarm row. A permanently failed once-alarm has `status='failed'` with the error text. A cron alarm that skips a fire records the error before advancing. Nothing is silently dropped.
+| 0 | 30s |
+| 1 | 60s |
+| 2 | 120s |
+| 3 | 240s |
+| 4 | 480s (8min) |
+| 5+ | 900s (15min, capped) |

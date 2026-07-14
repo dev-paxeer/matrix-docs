@@ -1,9 +1,9 @@
 ---
 title: "Conversation Store"
-description: "Package matrix/neo/internal/conversation is Neo's durable chat-thread memory. It persists each turn as one JSON file per conversation_id, so history survives reloads, new chats,..."
+description: "Package matrix/neo/internal/conversation is Neo's durable chat-thread memory. It persists each turn as append-only JSONL per conversation_id with a retained-turn cap and archive rollover."
 ---
 
-Package `matrix/neo/internal/conversation` is Neo's durable chat-thread memory. It persists each turn as one JSON file per `conversation_id`, so history survives reloads, new chats, suspend, and redeploy.
+Package `matrix/neo/internal/conversation` is Neo's durable chat-thread memory. It persists each turn as append-only JSONL (one line per turn) per `conversation_id`, so history survives reloads, new chats, suspend, and redeploy at O(1) write cost per turn.
 
 Source file: `neo/internal/conversation/store.go`.
 
@@ -11,11 +11,13 @@ Source file: `neo/internal/conversation/store.go`.
 
 ## Design decisions
 
-**Unified history with the daemon.** The on-disk shape is byte-compatible with the daemon's own conversation store. Neo derives the SAME directory (`filepath.Dir(cortexRoot)/conversations` = `/data/conversations` in prod), so a user's pre-Neo daemon threads and their new Neo threads list together as one unified history.
+**Unified history with the daemon.** The on-disk shape is byte-compatible with the daemon's own conversation store (`executor/cmd/mcl-execute/daemon_conversation.go`). A pre-Neo daemon thread written as a single JSON object is still readable (the loader falls back to the legacy single-object parse when the file is not JSONL). New writes are always JSONL. Neo derives the SAME directory (`filepath.Dir(cortexRoot)/conversations` = `/data/conversations` in prod), so a user's pre-Neo daemon threads and their new Neo threads list together as one unified history.
 
 **Pure side-channel.** It never touches cortex, signs anything, or perturbs replay. Conversation continuity and the audit/replay chain are independent storage.
 
-**Atomic writes.** Each append uses tmp + rename so a crash never leaves a corrupt file.
+**O(1) append writes.** Each turn is appended as one JSONL line with fsync. The rename-based atomic write (tmp + rename) is reserved for the archive rollup/compaction step, never for the per-turn append.
+
+**Retained-turn cap with archive rollover.** The hot set (live `.jsonl`) is bounded by `RetainedTurns` (config `NEO_CONVERSATION_RETAINED_TURNS`, default 1000). Turns that scroll past the cap roll to a sibling archive file (`<convID>.archive.jsonl`) -- durable, NOT dropped -- and remain retrievable via `History`/`Archived`/`Recent`.
 
 **Best-effort.** IO errors are logged, never fatal. A blank conversation id or text is ignored.
 
@@ -68,7 +70,7 @@ func (s *Store) AppendUser(convID, text string)
 func (s *Store) AppendAssistant(convID, intentID, text string)
 ```
 
-Records one turn and persists atomically. Zero TS is filled with `time.Now().UTC()`. Unbounded — all turns are retained (no cap).
+Records one turn and persists atomically. Zero TS is filled with `time.Now().UTC()`.
 
 ### Recent
 
@@ -76,7 +78,7 @@ Records one turn and persists atomically. Zero TS is filled with `time.Now().UTC
 func (s *Store) Recent(convID string, n int) []Turn
 ```
 
-Returns the last `n` turns (oldest-first), or nil when there are none. Used for resume seeding — `DefaultRecallTurns` = 16.
+Returns the last `n` turns (oldest-first), or nil when there are none. Used for resume seeding. `DefaultRecallTurns` = 16.
 
 ### Get
 
@@ -106,6 +108,15 @@ type Summary struct {
 
 Title derives from the first user turn (trimmed to 60 runes). Preview is the most recent turn (trimmed to 100 runes).
 
+### History and Archived
+
+```go
+func (s *Store) History(convID string, limit int) []Turn  // hot + archive, newest-first
+func (s *Store) Archived(convID string) []Turn            // archive file only
+```
+
+`History` merges the hot set and the archive, returning the most recent `limit` turns across both. `Archived` returns only the rolled-off turns.
+
 ---
 
 ## Directory resolution
@@ -115,7 +126,7 @@ func Dir(override, cortexRoot string) string
 ```
 
 - Explicit `NEO_CONVERSATIONS_DIR` wins
-- Otherwise derives from `filepath.Dir(cortexRoot)` → sibling of cortex root
+- Otherwise derives from `filepath.Dir(cortexRoot)` then sibling of cortex root
 - Returns `""` when neither is available (persistence disabled)
 
 This matches how `server.MediaDir` derives `/data/media` from `/data/cortex`.
@@ -132,7 +143,8 @@ The JSON tags match the daemon store and the web client's `ConversationTurn`. A 
 
 | What to change | Where |
 |---|---|
-| Default recall turns | `conversation/store.go` — `DefaultRecallTurns` |
-| Title/preview length | `conversation/store.go` — `truncateLabel()` |
-| Directory derivation | `conversation/store.go` — `Dir()` |
-| JSON shape | `conversation/store.go` — `Turn`, `Record`, `Summary` structs |
+| Default recall turns | `conversation/store.go` - `DefaultRecallTurns` (16) |
+| Retained-turn cap | `config/config.go` - `NEO_CONVERSATION_RETAINED_TURNS` (1000) |
+| Title/preview length | `conversation/store.go` - `truncateLabel()` |
+| Directory derivation | `conversation/store.go` - `Dir()` |
+| JSON shape | `conversation/store.go` - `Turn`, `Record`, `Summary` structs |

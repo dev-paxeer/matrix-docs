@@ -1,48 +1,137 @@
 ---
-title: Chatting with Matrix
-description: "How everyday conversation works — Neo as the front door, the Liaison narrator, when work is escalated to the rigorous MCL rail, and what the live transcript shows you."
+title: Chatting with Neo
+description: "How everyday conversation works, what Neo can do, how it shows its work, and when it escalates to the rigorous MCL rail."
 ---
 
-For day-to-day use you just talk to Matrix. The conversational agent, **Neo**, handles your request directly and only escalates to the rigorous rail when something is monetary or irreversible.
+For day-to-day use, you just talk to Matrix. **Neo** is the conversational agent that handles your request directly: it reads context, calls tools, and only escalates to the rigorous MCL pipeline when something is monetary or irreversible.
 
-## Who you're talking to
+## What Neo can do
+
+Neo has access to a broad surface of tools that it calls autonomously as your conversation requires. You do not need to invoke them by name; Neo decides which tools to use based on what you ask.
 
 <Columns cols={2}>
-  <Card title="Neo" icon="comments">
-    Answers, runs tools (files, code, web, fetch), and keeps context across the conversation. Permissive on reversible work.
+  <Card title="Web & Research" icon="globe">
+    Search the public web, fetch pages as clean markdown, and browse live websites with a headless browser (click, fill forms, take screenshots).
   </Card>
-  <Card title="The Liaison" icon="user-tie">
-    A narrator that translates the technical pipeline (compile → plan → execute) into plain-language updates so you always know what's happening.
+  <Card title="Files & Code" icon="code">
+    Read, write, and edit files. Run shell commands. Start long-lived services. Work with git repositories.
+  </Card>
+  <Card title="On-Chain Data" icon="chart-line">
+    Query the Paxeer chain: balances, transactions, token prices, trending tokens, portfolio performance, and contract reads.
+  </Card>
+  <Card title="On-Chain Actions" icon="arrow-right-arrow-left">
+    Transfer tokens, approve spenders, open payment streams, delegate stake, schedule future transactions, and interact with smart contracts.
+  </Card>
+  <Card title="Media" icon="image">
+    Generate images and video from text descriptions, edit existing images, remove backgrounds, generate speech audio, and animate still images.
+  </Card>
+  <Card title="Payments" icon="coins">
+    Pay other agents instantly via LayerX, fund your agent balance, withdraw to your Paxeer wallet, and fetch signed receipts.
   </Card>
 </Columns>
 
-## What happens when you send a message
+## How a conversation works
+
+Every message you send triggers a loop that reads your context, decides what to do, and carries it out.
 
 <Steps>
-  <Step title="Neo reads context">
-    It pulls relevant memory (facts, preferences, goals, past turns) so it doesn't ask you to repeat yourself.
+  <Step title="Neo reads your context">
+    It pulls relevant memory: facts, preferences, goals, and past turns. Long conversations are automatically compacted; older history is consolidated into a summary while preserving every important identifier (file paths, addresses, IDs) verbatim.
   </Step>
-  <Step title="It works the task">
-    Neo calls tools as needed, narrating progress. You see ephemeral status lines and a final answer.
+  <Step title="Neo calls tools as needed">
+    The model emits text and tool-call intents in a single turn. Neo dispatches each tool, observes the result, and decides whether to call more tools or return an answer. This loop continues until the task is done or the step budget is exhausted.
   </Step>
-  <Step title="It escalates if needed">
-    For anything that spends money or is irreversible, Neo hands off to the MCL rigorous rail, which produces a typed plan you review before it runs.
+  <Step title="You see the work in real time">
+    Every tool call produces a live event: the tool name, its arguments, and its result. You see web search snippets as they arrive, browser screenshots as pages are captured, and file writes as they happen. Neo never hides the evidence behind a synthesized paragraph.
+  </Step>
+  <Step title="Neo delivers the answer">
+    When the task is complete, Neo returns a final answer grounded in the tool results it collected. If the task could not be fully completed, it tells you honestly what it achieved and what remains.
   </Step>
 </Steps>
 
-<Tip>
-Long conversations are automatically compacted: Matrix consolidates older history into a summary while preserving every important identifier (file paths, addresses, IDs) verbatim, so nothing is silently dropped.
-</Tip>
+## Showing its work
 
-## The live transcript
+Matrix is designed around transparency. While Neo works, you see a streamed transcript of everything it does:
 
-While Matrix works you see a streamed transcript: the answer, brief progress notes, and deliberate notices (for example, when it's consolidating memory or escalating to the rigorous rail). Behind the scenes this is the daemon's `/events` Server-Sent Events stream.
+- **Tool calls** appear as they execute: "Searched the web for...", "Fetched https://...", "Wrote file to /workspace/...".
+- **Browser activity** is shown with live screenshots captured after each view-changing action.
+- **File writes** stream content in real time, so an open editor renders Neo typing as it generates the file.
+- **Reasoning** is surfaced when Neo thinks through a problem before acting.
+
+This "show the work" approach means you always know the real evidence behind an answer.
+
+## Agent Swarms
+
+For complex tasks that can be split into independent parts, Neo can spawn a **swarm** of sub-agents that run concurrently. Each sub-agent gets its own isolated context window and works on a self-contained task while their progress streams onto your conversation as a live agent swarm.
+
+Sub-agents are useful when a task has clearly separable research or analysis components. For example:
+
+> "Compare the top 3 DEXes on Paxeer by volume, fee structure, and TVL. Give me a summary table."
+
+Neo might spawn three sub-agents, each researching one DEX in parallel, then aggregate their findings into a single comparison table.
+
+Sub-agents inherit Neo's full tool surface for reversible work (files, web, code, on-chain reads) but cannot move money or spawn their own sub-agents. Results are collected into an aggregated digest that Neo synthesizes into its final answer.
+
+## Escalation to the rigorous rail
+
+When a task involves spending money or performing an irreversible on-chain action, Neo does not execute it directly. Instead, it hands off to the **MCL pipeline** (Matrix Communication Layer), which compiles your intent into a typed plan you can review before anything runs.
+
+This escalation is automatic. You do not need to trigger it. If you say "send 100 PAX to Alice," Neo will route that through the rigorous rail, show you the plan, and wait for your approval.
+
+<Info>
+The rigorous rail is a safety layer. Chain writes are gated twice: first by a per-call spend ceiling enforced at plan time, then by the Paxeer Embedded Wallet's own spend policy at signing time.
+</Info>
+
+## Autonomous execution
+
+Matrix can also work for you without you being in the conversation. The **Automatrix** system identifies proactive opportunities (based on your goals and context) and dispatches supervised agent runs on a restricted tool surface. These runs:
+
+- Resume into the original conversation so Neo has full context.
+- Are held to the same completion standards as any interactive turn.
+- Surface nothing to you unless they succeed.
+- Are retried up to a bounded number of attempts before being dismissed.
+
+Set a scheduled wake with the Chronos tools (e.g., "remind me in 2 hours to check on that deployment") and Neo will resume the relevant thread when the alarm fires.
+
+## Long conversations
+
+Matrix handles long threads gracefully:
+
+- **Compaction.** When the context window fills, older turns are consolidated. A dedicated extractor promotes durable facts, events, and patterns to cortex memory before older turns are evicted.
+- **Conversational recall.** Beyond the live transcript, Neo can surface the most relevant past turns for a given query using semantic and salience-weighted search. Relevance over raw recency.
+- **Persistent memory.** Facts you tell Neo ("my Paxeer address is 0x...", "I prefer concise answers") survive across conversations.
+
+## Examples
+
+**Research and analysis:**
+
+> **you:** What's the current PAX price and how has it changed over the last week?
+>
+> *Neo searches for current PAX price data, queries on-chain oracle prices, and returns a summary with the current price and recent trend.*
+
+**Code and files:**
+
+> **you:** Create a Python script that reads a CSV of token transfers and calculates the total volume per address.
+>
+> *Neo writes the script to your workspace, verifies it runs correctly, and explains how to use it.*
+
+**Browser automation:**
+
+> **you:** Go to PaxScan and look up the top 10 token holders for the USDX contract.
+>
+> *Neo navigates to PaxScan, searches for the contract, extracts the holder list, and presents it in a table.*
+
+**On-chain actions (with escalation):**
+
+> **you:** Send 50 PAX to 0x1234...abcd
+>
+> *Neo escalates to the rigorous rail, shows you the transfer plan with the destination, amount, and estimated fee, and waits for your approval before signing and broadcasting.*
 
 <Columns cols={2}>
-  <Card title="Using skills" icon="wand-magic-sparkles" href="/user-guide/skills">
-    How Matrix's capabilities are packaged.
+  <Card title="Using Skills" icon="wand-magic-sparkles" href="/user-guide/skills">
+    How Matrix's capabilities are packaged into reusable skills.
   </Card>
   <Card title="Wallet & PAX" icon="wallet" href="/user-guide/wallet">
-    How paid work and balances work.
+    How wallet integration, on-chain actions, and LayerX payments work.
   </Card>
 </Columns>

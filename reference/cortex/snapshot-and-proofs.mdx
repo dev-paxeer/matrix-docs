@@ -1,6 +1,6 @@
 ---
 title: "Snapshot & Proofs"
-description: "cortex/snapshot manages the cryptographic commitment layer: a journal MMR (Merkle Mountain Range) over every write, per-namespace SMTs (Sparse Merkle Trees) over canonical memor..."
+description: "cortex/snapshot manages the cryptographic commitment layer: journal MMR, per-namespace SMTs, SnapshotManifest, and multi-proofs for sub-agent scopes."
 ---
 
 `cortex/snapshot` manages the cryptographic commitment layer: a journal MMR (Merkle Mountain Range) over every write, per-namespace SMTs (Sparse Merkle Trees) over canonical memory and edge records, and `SnapshotManifest` values that seal a point-in-time `OverallRoot`. `cortex.Proof` builds multi-proofs for sub-agent scope shipping.
@@ -11,13 +11,17 @@ Source files: `cortex/snapshot/snapshot.go`, `cortex/snapshot/mmr.go`, `cortex/s
 
 ## Design decisions
 
-**Two anchored namespaces: `memories` and `edges`.** The SMT covers the canonical bytes of `m/<id>` (MemoryHead) and `e/from/<src>/<t>/<dst>` (EdgeRecord). Tombstones fold into the parent canonical bytes — a tombstoned Head carries `Tombstoned` set; the SMT value-hash changes. Salience, forms, and embedding metadata are NOT anchored (derived state).
+**Two anchored namespaces: `memories` and `edges`.** The SMT covers the canonical bytes of `m/<id>` (MemoryHead) and `e/from/<src>/<t>/<dst>` (EdgeRecord). Tombstones fold into the parent canonical bytes, a tombstoned Head carries `Tombstoned` set; the SMT value-hash changes. Salience, forms, embedding metadata, and checkpoint records are NOT anchored (derived state).
 
 **Cortex never signs.** The `SignedBy` field in `SnapshotManifest` is populated by the agent runtime or `tools/attest` layer before chain anchoring. Cortex holds no key material (D4).
 
-**Pull-driven snapshots.** `cortex.Snapshot(reason)` is called explicitly by the skill compiler, `tools/attest`, or a periodic snapshotter. There is no auto-snapshot. The `reason` is recorded in the manifest for ops visibility but does NOT feed `OverallRoot`.
+**Pull-driven snapshots.** `cortex.Snapshot(reason)` is called explicitly by the skill compiler, `tools/attest`, or a periodic snapshotter. There is no auto-snapshot. The `reason` is recorded in the manifest's `Trigger` field for ops visibility but does NOT feed `OverallRoot`.
 
-**MMR hook is always running.** `cortex.New` installs a `JournalHook` on the store. Every `AppendJournal` call — Write, Update, Tombstone, AddEdge, Embed, Compact, Attest, everything — atomically appends an MMR leaf in the same Pebble batch.
+**MMR hook is always running.** `cortex.New` installs a `JournalHook` on the store. Every `AppendJournal` call (Write, Update, Tombstone, AddEdge, Embed, Compact, Attest, LearnWeights, everything) atomically appends an MMR leaf in the same Pebble batch.
+
+**Schema version pinned in OverallRoot.** `SchemaVersion=1` is mixed into the root computation so adding a namespace at v2 forces an explicit re-anchor instead of silently re-rooting.
+
+**Counters not in OverallRoot.** Per-namespace memory + edge counts ride along the manifest as a replay sanity check but are not hashed in. Counter drift from a corrupted `accum/` would otherwise force a divergent root before the actual error surfaced.
 
 ---
 
@@ -31,9 +35,13 @@ root, err := c.OverallRoot()  // [32]byte
 
 ```
 OverallRoot = sha256(
-    journal_root   ||    // sha256 over all MMR peaks
-    memories_root  ||    // SMT root over m/<id> canonical bytes
-    edges_root           // SMT root over e/from/* canonical bytes
+    OverallRootDomain  ||   // "matrix.cortex.snapshot.overall.v1"
+    SchemaVersion(1B)  ||
+    journal_root       ||   // sha256 over all MMR peaks
+    nsCount(2B BE)     ||
+    for each ns sorted ascending:
+        lpString(ns)   ||   // length-prefixed namespace name
+        stateRoot            // per-namespace SMT root
 )
 ```
 
@@ -50,22 +58,28 @@ D11 seed = sha256(intent.id || actor || OverallRoot || mtx_digest || model_diges
 manifest, err := c.Snapshot("pre-compile")
 ```
 
-Persists a `SnapshotManifest` at `snap/<seq>` and returns it. The manifest captures:
+Persists a `SnapshotManifest` at `snap/<seq>` and returns it.
 
 ```go
 type Manifest struct {
-    SeqAtSnapshot uint64
-    CreatedAt     time.Time
-    Trigger       string      // "pre-compile", "post-attest", etc. — NOT in OverallRoot
+    SchemaVersion uint8
     Actor         string
-    SignedBy      string      // populated by agent runtime before chain anchor
+    SeqAtSnapshot uint64
+    JournalSeq    uint64              // max j/<seq> covered (inclusive); == LeafCount
     JournalRoot   [32]byte
-    StateRoots    map[string][32]byte  // {"memories": root, "edges": root}
+    StateRoots    map[string][32]byte // {"memories": root, "edges": root}
     OverallRoot   [32]byte
-    // sanity counters (not in OverallRoot):
-    MemoryCount   uint64
-    EdgeCount     uint64
-    TombstonedCount uint64
+    CreatedAt     int64               // Unix nanoseconds
+    Trigger       string              // "compile" | "attest" | "periodic" | "explicit" - NOT in OverallRoot
+    SignedBy      string              // populated by agent runtime before chain anchor
+    Signature     []byte              // populated by agent runtime
+    Counters      Counters            // NOT in OverallRoot
+}
+
+type Counters struct {
+    Memories   uint64
+    Edges      uint64
+    Tombstoned uint64  // memory tombstones (Head.Tombstoned set)
 }
 ```
 
@@ -81,15 +95,19 @@ leaf_hash = sha256("matrix.cortex.journal.v1" || canonical_CBOR_entry)
 
 Each `AppendJournal` call (inside a `WriteBatch`) invokes the installed `MMRHook`, which stages the leaf into the accumulator in the same atomic Pebble batch. The `journal_root` component of `OverallRoot` is derived from the current MMR peak set.
 
+### BatchedReader
+
+The MMR hook uses the `BatchedReader` interface to read previously staged (but not yet committed) nodes from the in-flight batch. This is required for `cortex.Attest`'s two-entry pattern: the second leaf's cascade may need to merge with the first leaf which was just staged in the same batch.
+
 ---
 
 ## Per-namespace SMTs
 
 Two sparse Merkle trees track canonical state:
 
-**`memories` SMT:** keyed by `sha256(m/<id:16>)` → value is `sha256(canonical_Head_CBOR)`. Updated on every `Write`, `Update`, `Tombstone`, `UpdateHead`, and embedder `KindEmbed` (the embedder rewrites `m/<id>` with `EmbeddingRef` set).
+**`memories` SMT:** keyed by `sha256(domain.memories.v1 || id[16])` with value `sha256(domain.value.v1 || canonical_Head_CBOR)`. Updated on every `Write`, `Update`, `Tombstone`, `UpdateHead`, and embedder `KindEmbed` (the embedder rewrites `m/<id>` with `EmbeddingRef` set).
 
-**`edges` SMT:** keyed by `sha256(src || edgeTypeByte || dst)` → value is `sha256(canonical_EdgeRecord_CBOR)`. Updated on every `AddEdge` and `RemoveEdge`.
+**`edges` SMT:** keyed by `sha256(domain.edges.v1 || src[16] || type[1] || dst[16])` with value `sha256(domain.value.v1 || canonical_EdgeRecord_CBOR)`. Updated on every `AddEdge` and `RemoveEdge`. Forward direction only - the reverse `e/to` record is byte-identical and would double-count.
 
 SMT node cache lives under `idx/smt/`, which is in the derived (droppable) namespace. Rebuild re-derives the SMTs from the canonical `m/` and `e/from/` keys.
 
@@ -112,7 +130,7 @@ scope := &scope.Scope{
 }
 ```
 
-`Proof` returns a `snapshot.MultiProof` — a compact proof bundle that lets the sub-agent verify its included keys against `manifest.OverallRoot` without trusting the API.
+`Proof` returns a `snapshot.MultiProof` - a compact proof bundle that lets the sub-agent verify its included keys against `manifest.OverallRoot` without trusting the API.
 
 If the memories SMT root has drifted since `manifest` was taken (i.e. new writes happened), `Proof` returns `ErrManifestRootMismatch`. Re-Snapshot before re-Proof.
 
@@ -120,8 +138,9 @@ If the memories SMT root has drifted since `manifest` was taken (i.e. new writes
 
 ```go
 type MultiProof struct {
-    Root   [32]byte
-    Proofs []SingleProof   // one per requested key
+    Root      [32]byte
+    Namespace string          // "memories" or "edges"
+    Proofs    []SingleProof   // one per requested key
 }
 
 type SingleProof struct {
@@ -142,7 +161,7 @@ manifest, err := c.snap.FindSnapshotByRoot(hash)
 // err == snapshot.ErrSnapshotNotFound if no manifest has that OverallRoot
 ```
 
-Used by the scope verifier to resolve `Scope.SnapshotHash` against existing manifests. Returns the manifiest whose `OverallRoot` matches `hash`.
+Used by the scope verifier to resolve `Scope.SnapshotHash` against existing manifests. Returns the manifest whose `OverallRoot` matches `hash`.
 
 ---
 
@@ -156,11 +175,22 @@ Returns the live roots without persisting a manifest. Used internally by `Overal
 
 ---
 
+## Storage cost
+
+For 100k memories + 100k edges per actor:
+- MMR nodes: approximately 2N = 400k x 32 B = 13 MB under `accum/mmr/n/*`
+- SMT nodes per namespace: bounded by O(N . 256) but empty-subtree compression keeps the realized count near O(N . log2N). Rough estimate: 1.7M nodes per namespace x 32 B + key overhead = 80 MB per namespace, 160 MB total under `idx/smt/{memories,edges}/n/*`
+- Snapshot manifests: 250 B each; at 1 per intent + periodic = 10 MB/month under `snap/<seq>`
+
+Pebble compaction reclaims tombstoned/superseded nodes as the SMTs evolve.
+
+---
+
 ## Modifying snapshots
 
 | What to change | Where |
 |---|---|
-| Add an anchored namespace | `snapshot/smt.go` — new SMT; `snapshot/snapshot.go` — add to `StateRoots`; `replay/rebuild.go` — re-derive in rebuild |
-| Change MMR hash domain prefix | `journal/journal.go` — `LeafDomain` — invalidates all existing journals |
-| Add fields to SnapshotManifest | `snapshot/snapshot.go` — bump schema version; add to CBOR key map |
-| Change which keys are derived vs canonical | `replay/drop.go` — `derivedPrefixes`; document whether the new key participates in OverallRoot |
+| Add an anchored namespace | `snapshot/smt.go` - new SMT; `snapshot/snapshot.go` - add to `StateRoots`; `replay/rebuild.go` - re-derive in rebuild |
+| Change MMR hash domain prefix | `journal/journal.go` - `LeafDomain` - invalidates all existing journals |
+| Add fields to SnapshotManifest | `snapshot/snapshot.go` - bump schema version; add to CBOR key map |
+| Change which keys are derived vs canonical | `replay/drop.go` - `derivedPrefixes`; document whether the new key participates in OverallRoot |

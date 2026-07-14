@@ -1,11 +1,11 @@
 ---
 title: "ABI Encoder"
-description: "The ABI encoder bridges JSON-decoded values to the exact Go types required by go-ethereum's ABI packer. JSON decoding produces float64/string/bool/[]interface{}/map[string]inter..."
+description: "The ABI encoder bridges JSON-decoded values to the exact Go types required by go-ethereum's ABI packer for method calls and constructor arguments."
 ---
 
 **Source file:** `internal/abienc/abienc.go`
 
-The ABI encoder bridges JSON-decoded values to the exact Go types required by go-ethereum's ABI packer. JSON decoding produces `float64/string/bool/[]interface{}/map[string]interface{}`; the ABI packer needs `*big.Int` for `uint256`, `common.Address` for addresses, `[N]byte` for fixed bytes, etc. This package coerces each value into the precise Go type the ABI expects.
+The ABI encoder bridges JSON-decoded values to the exact Go types required by go-ethereum's ABI packer. JSON decoding produces `float64/string/bool/[]interface{}/map[string]interface{}`; the ABI packer needs `*big.Int` for `uint256`, `common.Address` for addresses, `[N]byte` for fixed bytes, etc. This package coerces each value into the precise Go type the ABI expects, driven by the contract ABI itself.
 
 ---
 
@@ -24,18 +24,26 @@ func toBigInt(v interface{}) (*big.Int, error)
 ```
 
 Supported input types:
-- `*big.Int` — passthrough
-- `json.Number` — decimal string
-- `string` — decimal or `0x` hex
-- `float64` — converted via `big.NewFloat` (rejects non-integral)
+- `*big.Int` - passthrough
+- `json.Number` - decimal string
+- `string` - decimal or `0x` hex
+- `float64` - converted via `big.NewFloat` (rejects non-integral)
 
-For ABI types smaller than 256 bits, the encoder returns the exact Go type (`int8/16/32/64`, `uint8/16/32/64`) to satisfy go-ethereum's packer.
+For ABI types smaller than 256 bits, the encoder returns the exact Go type (`int8/16/32/64`, `uint8/16/32/64`) to satisfy go-ethereum's packer. The size-to-type mapping:
+
+| ABI size | Signed | Unsigned |
+|---|---|---|
+| 8 | `int8` | `uint8` |
+| 16 | `int16` | `uint16` |
+| 32 | `int32` | `uint32` |
+| 64 | `int64` | `uint64` |
+| 128/256 | `*big.Int` | `*big.Int` |
 
 ### Tuple support
 
 Tuples accept either:
 - An ordered JSON array (positional)
-- A JSON object keyed by Solidity field names (named)
+- A JSON object keyed by Solidity field names (named, using `TupleRawNames`)
 
 ```go
 // Array form:
@@ -45,16 +53,14 @@ Tuples accept either:
 {"to": "0xRecipient", "amount": "1000000000000000000"}
 ```
 
-The encoder uses `abi.Type.TupleRawNames` to map object keys to struct fields.
-
 ### Array/slice support
 
-Dynamic arrays (`uint256[]`) and fixed arrays (`uint256[3]`) are both supported. The encoder builds the correct Go slice or array type via reflection.
+Dynamic arrays (`uint256[]`) and fixed arrays (`uint256[3]`) are both supported. The encoder builds the correct Go slice or array type via reflection. Fixed arrays enforce element count.
 
 ### Bytes support
 
-- `bytes` (dynamic): hex string → `[]byte`
-- `bytesN` (fixed): hex string → `[N]byte` via reflection
+- `bytes` (dynamic): hex string to `[]byte`
+- `bytesN` (fixed): hex string to `[N]byte` via reflection, with length validation
 
 ---
 
@@ -64,9 +70,11 @@ Dynamic arrays (`uint256[]`) and fixed arrays (`uint256[3]`) are both supported.
 // Pack a method call (4-byte selector + arguments)
 func Pack(abiJSON []byte, method string, args any) ([]byte, error)
 
-// Pack constructor arguments (no selector)
+// Pack constructor arguments (no selector, for appending to creation bytecode)
 func PackConstructorArgs(abiJSON []byte, args any) ([]byte, error)
 ```
+
+Both functions accept `args` as `nil`, `[]interface{}`, `json.RawMessage`, or any value that marshals to a JSON array.
 
 ---
 
@@ -74,8 +82,8 @@ func PackConstructorArgs(abiJSON []byte, args any) ([]byte, error)
 
 | ABI type | JSON input | Go output |
 |---|---|---|
-| `int8`–`int256` | number/string | `int8/16/32/64` or `*big.Int` |
-| `uint8`–`uint256` | number/string | `uint8/16/32/64` or `*big.Int` |
+| `int8`-`int256` | number/string | `int8/16/32/64` or `*big.Int` |
+| `uint8`-`uint256` | number/string | `uint8/16/32/64` or `*big.Int` |
 | `bool` | boolean | `bool` |
 | `string` | string | `string` |
 | `address` | hex string | `common.Address` |
@@ -91,7 +99,7 @@ func PackConstructorArgs(abiJSON []byte, args any) ([]byte, error)
 
 | What to change | Where |
 |---|---|
-| Add new ABI type | `internal/abienc/abienc.go` — `coerce` switch |
-| Change integer parsing | `internal/abienc/abienc.go` — `toBigInt` |
-| Add tuple field alias | `internal/abienc/abienc.go` — `coerceTuple` |
-| Add struct tag support | `internal/abienc/abienc.go` — use `reflect` tags |
+| Add new ABI type | `internal/abienc/abienc.go` - `coerce` switch |
+| Change integer parsing | `internal/abienc/abienc.go` - `toBigInt` |
+| Add tuple field alias | `internal/abienc/abienc.go` - `coerceTuple` |
+| Add struct tag support | `internal/abienc/abienc.go` - use `reflect` tags |

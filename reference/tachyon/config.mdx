@@ -1,94 +1,87 @@
 ---
 title: "Config"
-description: "The config system loads daemon settings from a .kvx file with environment variable precedence. It supports two wallet modes, capability policy profiles, and custom chain registr..."
+description: "Runtime configuration uses the .kvx format with environment variable precedence. It controls the API address, project paths, wallet mode, policy profiles, and chain definitions."
 ---
 
 **Source files:** `internal/config/config.go`, `internal/config/kvx.go`
 
-The config system loads daemon settings from a `.kvx` file with environment variable precedence. It supports two wallet modes, capability policy profiles, and custom chain registrations.
+Runtime configuration is loaded with precedence: **environment variables > `tachyon.config.kvx` > defaults**. A `.env` file in the working directory is loaded when present.
 
 ---
 
 ## Design decisions
 
-### `.kvx` format, not TOML/YAML/JSON
+### KVX format
 
-The config uses a custom sectioned key/value format (`.kvx`) that is zero-dependency, deterministic, and matches the Matrix `.mtx` convention:
+The config file uses a simple INI-like `.kvx` format with `section.key = value` syntax. Sections are dot-separated (e.g., `wallet.self_hosted`, `policy.default`, `chains.paxeer-mainnet`).
 
-```
-[section]
-key = "string"            # double-quoted strings
-num = 31337               # bare ints/bools
-list = ["a", "b"]         # bracketed, comma-separated, quoted items
-[section.sub]
-ref = "${ENV_VAR}"        # env interpolation
-```
+### Precedence chain
 
-This avoids pulling in TOML/YAML parsers and keeps the config file human-readable and comment-friendly.
+Every config value follows the same precedence:
 
-### Precedence: environment > kvx > defaults
+1. Environment variable (highest priority)
+2. `tachyon.config.kvx` value
+3. Hardcoded default (lowest priority)
 
-Every config value is resolved via `pick(envKey, kvxVal, fallback)`:
+The `pick(envKey, kvxVal, fallback)` function implements this consistently.
 
-1. Environment variable (if set and non-empty)
-2. `.kvx` file value (if present)
-3. Hardcoded default
+### .env file loading
 
-This lets operators override any setting via environment without editing the file.
+When a `.env` file exists in the working directory, it is loaded before config parsing. Only `KEY=VALUE` lines are processed; comments (`#`) and blank lines are skipped. Quoted values are trimmed. Existing environment variables are not overwritten.
 
-### `.env` file loading
+### Foundry root detection
 
-A `.env` file in the working directory is loaded when present (KEY=VALUE lines only, no export prefix needed). This is loaded before `.kvx` parsing, so `.kvx` `${ENV_VAR}` references resolve values from `.env`.
-
-### Wallet mode auto-detection
-
-If `wallet.mode` is not explicitly set, the config loader auto-detects from environment:
-
-- `TACHYON_ALLOW_DEV_SIGNER=true` or `TACHYON_DEV_PRIVATE_KEY` set → `self_hosted`
-- `PAXEER_WALLET_TOKEN` or `MATRIX_EXECUTOR_KEY` set → `embedded`
-
-This backwards-compatibility shim supports the original dev/Paxeer signer environment variables.
-
-### Foundry root discovery
-
-If `project_root` is `.` (default), the config loader walks up to 12 parent directories looking for `foundry.toml`. This means the daemon can be started from any subdirectory of a Foundry project.
+`findFoundryRoot` walks up to 12 parent directories from `ProjectRoot` looking for `foundry.toml`. When found, it becomes the effective project root. This lets the daemon auto-detect the project root when launched from a subdirectory.
 
 ---
 
-## Config structure
+## Config struct
 
 ```go
 type Config struct {
-    APIAddr      string
-    ProjectRoot  string
-    ArtifactsDir string
-    RegistryPath string
-    SolcPath     string
-    ForgePath    string
-    AuthToken    string
-    Wallet       WalletConfig
-    Policies     map[string]PolicyProfile
-    Chains       []ChainConfig
-}
+    APIAddr      string                    // default ":8645"
+    ProjectRoot  string                    // default "." (resolved to cwd)
+    ArtifactsDir string                    // default "artifacts"
+    RegistryPath string                    // default "registry.json"
+    SolcPath     string                    // default "" (forge finds it)
+    ForgePath    string                    // default "forge"
+    AuthToken    string                    // default "" (auth disabled)
 
+    Wallet   WalletConfig
+    Policies map[string]PolicyProfile
+    Chains   []ChainConfig
+}
+```
+
+### WalletConfig
+
+```go
 type WalletConfig struct {
-    Mode             string // "" | self_hosted | embedded
-    Signer           string // raw | keystore | env
-    PrivateKey       string
-    KeystorePath     string
+    Mode             string // "" | "self_hosted" | "embedded"
+    Signer           string // "raw" | "keystore" | "env"
+    PrivateKey       string // hex key (SignerRaw/SignerEnv)
+    KeystorePath     string // geth v3 JSON path (SignerKeystore)
     KeystorePassword string
-    Keyfile          string // ed25519 seed path
-    Label            string // DID label
+    Keyfile          string // ed25519 seed path (embedded mode)
+    Label            string // DID label, default "executor"
     API              string // embedded wallet base URL
 }
+```
 
+### PolicyProfile
+
+```go
 type PolicyProfile struct {
     Name        string
     SpendCapWei string
-    Allow       []string
-    Chains      []string
+    Allow       []string   // contract addresses
+    Chains      []string   // chain ids
 }
+```
 
+### ChainConfig
+
+```go
 type ChainConfig struct {
     ID       string
     Name     string
@@ -100,59 +93,27 @@ type ChainConfig struct {
 
 ---
 
-## KVX parser
+## Environment variables
 
-```go
-type kvxDoc struct {
-    sections map[string]map[string]string
-    order    []string
-}
-```
-
-### Typed accessors
-
-```go
-func (d *kvxDoc) str(section, key string) string      // interpolated string
-func (d *kvxDoc) list(section, key string) []string   // bracketed list
-func (d *kvxDoc) uint64Or(section, key string, fallback uint64) uint64
-func (d *kvxDoc) sectionsWithPrefix(prefix string) []string
-```
-
-### Interpolation
-
-`${ENV_VAR}` is replaced with `os.Getenv("ENV_VAR")` at parse time. This happens in `interpolate()`, called by `str()` and `list()`.
-
----
-
-## Example config
-
-```
-[server]
-addr       = "127.0.0.1:8645"
-auth_token = "${TACHYON_AUTH_TOKEN}"
-
-[wallet]
-mode = "self_hosted"
-
-[wallet.self_hosted]
-signer      = "env"
-private_key = "${DEPLOYER_PK}"
-
-[wallet.embedded]
-keyfile = "/data/.matrix/executor.key"
-label   = "executor"
-api     = "https://connect.paxportwallet.com"
-
-[policy.default]
-spend_cap_wei = "100000000000000000"
-allow         = []
-chains        = ["paxeer-mainnet"]
-
-[chains.anvil]
-name     = "Local Anvil"
-rpc_url  = "http://127.0.0.1:8545"
-chain_id = 31337
-```
+| Variable | Maps to | Default |
+|---|---|---|
+| `TACHYON_CONFIG` | Config file path | `tachyon.config.kvx` |
+| `TACHYON_API_ADDR` | `APIAddr` | `:8645` |
+| `TACHYON_PROJECT_ROOT` | `ProjectRoot` | `.` |
+| `TACHYON_ARTIFACTS_DIR` | `ArtifactsDir` | `artifacts` |
+| `TACHYON_REGISTRY_PATH` | `RegistryPath` | `registry.json` |
+| `TACHYON_SOLC_PATH` | `SolcPath` | (empty) |
+| `TACHYON_FORGE_PATH` | `ForgePath` | `forge` |
+| `TACHYON_AUTH_TOKEN` | `AuthToken` | (empty) |
+| `TACHYON_WALLET_MODE` | `Wallet.Mode` | (auto-detect) |
+| `TACHYON_WALLET_SIGNER` | `Wallet.Signer` | (auto-detect) |
+| `TACHYON_DEV_PRIVATE_KEY` | `Wallet.PrivateKey` | (empty) |
+| `TACHYON_KEYSTORE_PATH` | `Wallet.KeystorePath` | (empty) |
+| `TACHYON_KEYSTORE_PASSWORD` | `Wallet.KeystorePassword` | (empty) |
+| `MATRIX_EXECUTOR_KEY` | `Wallet.Keyfile` | (empty) |
+| `TACHYON_AGENT_LABEL` | `Wallet.Label` | `executor` |
+| `PAXEER_WALLET_API` | `Wallet.API` | (empty) |
+| `PAXEER_WALLET_TOKEN` | (auto-selects embedded mode) | - |
 
 ---
 
@@ -160,7 +121,7 @@ chain_id = 31337
 
 | What to change | Where |
 |---|---|
-| Add config field | `internal/config/config.go` — `Config` struct + `Load` |
-| Add kvx accessor | `internal/config/kvx.go` — new typed method |
-| Change precedence | `internal/config/config.go` — `pick` function |
-| Add env shim | `internal/config/config.go` — `loadWallet` |
+| Add config field | `internal/config/config.go` - `Config` struct + `Load()` |
+| Add env variable | `internal/config/config.go` - `pick()` call in `Load()` |
+| Add KVX section | `internal/config/config.go` - `loadWallet`/`loadPolicies`/`loadChains` |
+| Change KVX format | `internal/config/kvx.go` - parser |

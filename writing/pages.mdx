@@ -7,7 +7,7 @@ Every `.mdx` file in your project becomes a page. The file path determines the U
 
 ## Frontmatter
 
-Each page starts with frontmatter — metadata between `---` fences:
+Each page starts with frontmatter: metadata between `---` fences at the top of the file.
 
 ```mdx
 ---
@@ -19,41 +19,59 @@ Your content starts here.
 ```
 
 | Field | Required | Description |
-|-------|----------|-------------|
-| `title` | Yes | Page title shown in the browser tab and sidebar |
-| `description` | No | Meta description for SEO |
+| --- | --- | --- |
+| `title` | Yes | Page title shown in the browser tab and sidebar. |
+| `description` | No | Meta description for search engines and social previews. |
 
 ## File organization
 
 Your file structure maps directly to URLs:
 
+```text
+introduction.mdx        -> /introduction
+quickstart.mdx          -> /quickstart
+guides/deployment.mdx   -> /guides/deployment
+api/users/list.mdx      -> /api/users/list
 ```
-introduction.mdx        → /introduction
-quickstart.mdx          → /quickstart
-guides/deployment.mdx   → /guides/deployment
-api/users/list.mdx      → /api/users/list
-```
+
+Directories become URL segments. Nest files to create a hierarchy.
 
 ## Markdown features
 
-MDX supports all standard Markdown:
+MDX supports all standard Markdown syntax:
 
-- **Bold**, *italic*, `inline code`, and [links](https://jamdesk.com).
-- Ordered and unordered lists (you're reading one).
-- Fenced code blocks with syntax highlighting.
-- Tables, blockquotes, and headings (`##`, `###`, `####`).
-
-Lists, tables, and blockquotes render natively:
+- **Bold** with `**bold**`
+- *Italic* with `*italic*`
+- `Inline code` with backticks
+- [Links](/mcp/overview) with `[text](url)`
+- Ordered and unordered lists
+- Fenced code blocks with syntax highlighting
+- Tables, blockquotes, and headings
 
 | Format | Markdown | Renders as |
-|--------|----------|-----------|
+| --- | --- | --- |
 | Bold | `**bold**` | **bold** |
-| Italic | `*italic*` | *italic* |
+| Italic | `*italic*` | *italic** |
 | Code | `` `code` `` | `code` |
-| Link | `[text](url)` | [text](https://jamdesk.com) |
+| Link | `[text](url)` | [text](/mcp/overview) |
 
-> Blockquotes pull a passage out of the flow. Use them sparingly.
+> Blockquotes pull a passage out of the flow. Use them sparingly for quotes or callouts.
+
+## Headings and table of contents
+
+Headings on the page automatically appear in the right sidebar as a table of contents. Use `##` for top-level sections and `###` for subsections. Avoid skipping levels (e.g., going from `##` directly to `####`).
+
+```mdx
+## First section
+Content here.
+
+### Subsection
+More detail.
+
+## Second section
+Back to the top level.
+```
 
 <Note>
-Headings on the page automatically appear in the right sidebar as a table of contents.
+MDX components (Callouts, Cards, Steps, Tabs) are available in every page without imports. See [Using Components](/writing/components) for a guide to choosing the right one.
 </Note>

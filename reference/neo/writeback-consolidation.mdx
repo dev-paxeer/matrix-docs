@@ -1,9 +1,9 @@
 ---
 title: "Write-back Consolidation"
-description: "Package matrix/neo/internal/writeback is Neo's automatic background consolidation pass. After each turn, a cheap model sweeps the transcript and promotes durable learnings into..."
+description: "Package matrix/neo/internal/writeback is Neo's automatic background consolidation pass. After each turn, a dual-model pipeline sweeps the transcript and promotes durable learnings into cortex."
 ---
 
-Package `matrix/neo/internal/writeback` is Neo's automatic background consolidation pass. After each turn, a cheap model sweeps the transcript and promotes durable learnings into cortex — objective facts (semantic), task outcomes (episodic), and reusable how-to patterns (procedural). The main agent never has to consciously call `remember()`.
+Package `matrix/neo/internal/writeback` is Neo's automatic background consolidation pass (the frozen spec's write-back, option B): after each turn a cheap model sweeps the transcript and promotes durable learnings into cortex -- objective facts (semantic), task outcomes (episodic), and reusable how-to patterns (procedural). The main agent never has to consciously call `remember()`; this keeps the durable store current so compaction only has to capture the ephemeral story-so-far.
 
 Source file: `neo/internal/writeback/consolidator.go`.
 
@@ -11,13 +11,17 @@ Source file: `neo/internal/writeback/consolidator.go`.
 
 ## Design decisions
 
-**Option B: automatic background consolidation.** The frozen spec considered two options: (A) agent-must-remember and (B) automatic background pass. Neo chose B — the main agent never has to consciously call `remember()`. This keeps the durable store current so compaction only has to capture the ephemeral story-so-far.
+**Option B: automatic background consolidation.** The frozen spec considered two options: (A) agent-must-remember and (B) automatic background pass. Neo chose B. The main agent never has to consciously call `remember()`.
 
-**Cheap model.** The consolidation pass uses the cheap model (or main as fallback). This is a background goroutine that never blocks the agent loop.
+**Dual-model pipeline.** The consolidator uses two LLM clients: `extract` (a stronger model for durable-learning extraction, because extraction quality directly sets memory quality) and `classify` (a cheap model for the rare similar-neighbor relation check). A nil `classify` falls back to `extract`.
 
-**Best-effort, bounded queue.** Jobs are enqueued on a channel of depth 8. If the queue is full, the job is dropped — cortex stays eventually-current; the live transcript is ground truth for the turn anyway.
+**Best-effort, bounded queue.** Jobs are enqueued on a channel of depth 8. If the queue is full, the job is dropped; cortex stays eventually-current. The live transcript is ground truth for the turn anyway.
+
+**Synchronous mode for compaction.** `ConsolidateSync` runs the same extraction on the caller's goroutine. Called from `compact()` before evicting older turns so durable facts/events/patterns reach cortex before the turns are lost.
 
 **Very selective.** Most interactions yield nothing, and that is the correct, common answer. The prompt explicitly instructs the model to return empty arrays when nothing is durable.
+
+**Auto-propose skills.** When a pattern's coverage crosses `MinPatternSuccesses`, the consolidator proposes it as a skill (P2-2). Proposed skills are deduped by pattern name and tracked with a reinforcement count.
 
 ---
 
@@ -25,16 +29,23 @@ Source file: `neo/internal/writeback/consolidator.go`.
 
 ```go
 type Consolidator struct {
-    cfg   config.Config
-    model *llm.Client
-    pager *memory.Pager
-    jobs  chan string
-    done  chan struct{}
+    cfg      config.Config
+    extract  *llm.Client // durable-learning extraction (stronger; quality sets memory quality)
+    classify *llm.Client // cheap relation-classify on the rare similar-neighbor path
+    pager    *memory.Pager
+
+    jobs chan string
+    done chan struct{}
+
+    proposeMu      sync.Mutex
+    proposed       []string
+    proposedSet    map[string]struct{}
+    reinforceCount map[string]int // tracks reinforcement per pattern name
 }
 ```
 
 ```go
-wc := writeback.New(cm, pager, cfg)
+wc := writeback.New(extractClient, classifyClient, pager, cfg)
 wc.Start()
 defer wc.Stop()
 
@@ -42,13 +53,18 @@ defer wc.Stop()
 if a.consolidator != nil {
     a.consolidator.Consolidate(renderTranscript(a.working))
 }
+
+// Before compaction evicts older turns:
+if a.consolidator != nil {
+    a.consolidator.ConsolidateSync(ctx, renderTranscript(oldTurns))
+}
 ```
 
 ---
 
 ## Consolidation prompt
 
-The cheap model reads the transcript and extracts ONLY durable learnings:
+The extraction model reads the transcript and extracts ONLY durable learnings:
 
 ```
 Return STRICT JSON:
@@ -71,7 +87,7 @@ Return STRICT JSON:
 
 Rules:
 - `facts`: objective, durable truths about repo/environment/domain (NOT transient chit-chat)
-- `user_facts`: durable truths about the USER (name, role, preferences) — pinned to every future conversation
+- `user_facts`: durable truths about the USER (name, role, preferences) - pinned to every future conversation
 - `patterns`: reusable how-to recipes (name, trigger, preconditions, steps, gotchas, success_criteria)
 - `outcome`: include ONLY if a concrete task was completed or failed; otherwise null
 - Copy identifiers verbatim
@@ -89,7 +105,7 @@ For each extracted category:
 _, _ = pager.RememberFact(ctx, statement)
 ```
 
-Stored as `FactData` with subject `matrix://knowledge/neo`.
+Stored as `FactData` with subject `matrix://knowledge/neo`. Semantic dedup prevents near-identical duplicates.
 
 ### User facts (up to 5)
 
@@ -105,7 +121,7 @@ Stored as `FactData` with subject `matrix://knowledge/user`. Deduped by normaliz
 _, _ = pager.ReinforcePattern(ctx, spec, nil)
 ```
 
-If a pattern with the same dedup identity (name → trigger → steps) already exists, it is reinforced (coverage++, strength nudged up). Otherwise a fresh low-confidence candidate is written.
+If a pattern with the same dedup identity (name, trigger, steps) already exists, it is reinforced (coverage++, strength nudged up). Otherwise a fresh low-confidence candidate is written. When coverage crosses `MinPatternSuccesses`, the pattern is added to the proposed skills list.
 
 ### Outcome (1)
 
@@ -128,12 +144,26 @@ parseLooseJSON("Sure! Here is the result:\n{...}\nHope that helps.", &out)
 
 ---
 
+## Proposed skills
+
+The consolidator tracks patterns that cross the success threshold and exposes them:
+
+```go
+func (c *Consolidator) ProposedSkills() []string
+```
+
+Returns the names of proposed skills (deduped, ordered by proposal time). The session injects these into the agent's stable system prefix as a names-only skill index.
+
+---
+
 ## Modifying write-back
 
 | What to change | Where |
 |---|---|
-| Consolidation prompt | `writeback/consolidator.go` — `consolidatePrompt` |
-| Extraction limits | `writeback/consolidator.go` — `process()` loop bounds |
-| Queue depth | `writeback/consolidator.go` — `jobs` channel buffer |
-| Timeout | `writeback/consolidator.go` — `process()` context timeout |
-| JSON parsing | `writeback/consolidator.go` — `parseLooseJSON()` |
+| Consolidation prompt | `writeback/consolidator.go` - `consolidatePrompt` |
+| Extraction limits | `writeback/consolidator.go` - `process()` loop bounds |
+| Queue depth | `writeback/consolidator.go` - `jobs` channel buffer (8) |
+| Timeout | `writeback/consolidator.go` - `process()` context timeout |
+| JSON parsing | `writeback/consolidator.go` - `parseLooseJSON()` |
+| Auto-propose threshold | `config/config.go` - `MinPatternSuccesses` |
+| Extraction model | `config/config.go` - `ConsolidationModel` |

@@ -1,6 +1,6 @@
 ---
 title: "MCP Server"
-description: "The MCP (Model Context Protocol) server exposes tachyon verbs as MCP tools over stdio newline-delimited JSON-RPC. This is the primary transport for LLM agent integration when th..."
+description: "The MCP server exposes tachyon verbs as MCP tools over stdio newline-delimited JSON-RPC. This is the primary transport for LLM agent integration when the daemon runs as a subprocess."
 ---
 
 **Source files:** `pkg/mcp/server.go`, `pkg/mcp/tools.go`
@@ -13,7 +13,7 @@ The MCP (Model Context Protocol) server exposes tachyon verbs as MCP tools over 
 
 ### Stdio NDJSON-RPC
 
-MCP uses stdin/stdout with newline-delimited JSON-RPC 2.0 messages. The server reads one line at a time, parses the request, dispatches to the engine, and writes the response. stdout is flushed after every message so clients block until the response is ready.
+MCP uses stdin/stdout with newline-delimited JSON-RPC 2.0 messages. The server reads one line at a time (1 MiB buffer), parses the request, dispatches to the engine, and writes the response. stdout is flushed after every message so clients block until the response is ready.
 
 ```go
 scanner := bufio.NewScanner(os.Stdin)
@@ -27,25 +27,23 @@ for scanner.Scan() {
 
 ### Log redirection
 
-In MCP mode, logs are written to stderr so they don't corrupt the NDJSON-RPC stream on stdout. The daemon detects MCP mode via the `--mcp` flag and reconfigures the slog handler accordingly.
+In MCP mode, logs are written to stderr so they do not corrupt the NDJSON-RPC stream on stdout. The daemon detects MCP mode via the `--mcp` flag and reconfigures the slog handler accordingly.
 
 ### Tool registry
 
-The MCP tool list is a static registry in `tools.go`:
+The MCP tool list is a static registry in `tools.go`. Nine tools are registered:
 
-```go
-var ToolNames = []string{
-    "tachyon_compile",
-    "tachyon_test",
-    "tachyon_simulate",
-    "tachyon_deploy",
-    "tachyon_call",
-    "tachyon_chain_list",
-    "tachyon_chain_register",
-    "tachyon_artifact_get",
-    "tachyon_registry_lookup",
-}
-```
+| Tool | Description |
+|---|---|
+| `tachyon_compile` | Build Solidity contracts via forge |
+| `tachyon_test` | Run Forge tests with structured JSON results |
+| `tachyon_simulate` | Dry-run eth_call without broadcasting |
+| `tachyon_deploy` | Intent-based deploy with idempotency key |
+| `tachyon_call` | Contract call (simulate_only or broadcast) |
+| `tachyon_chain_list` | List configured chain RPC profiles |
+| `tachyon_chain_register` | Register a custom chain profile |
+| `tachyon_artifact_get` | Fetch cached ABI/bytecode by contract name |
+| `tachyon_registry_lookup` | Resolve prior deployment by idempotency key |
 
 Each tool has a name, description, and input schema. The schema is permissive (`additionalProperties: true`) because the actual validation happens in the engine.
 
@@ -80,13 +78,13 @@ The `FormatToolError` helper builds this structure from a `types.Error`.
 
 | MCP Method | Handler |
 |---|---|
-| `initialize` | Return protocol version, server info, capabilities |
+| `initialize` | Return protocol version (`2024-11-05`), server info (`tachyon-tools` + version), capabilities |
 | `tools/list` | Return tool descriptors |
-| `tools/call` | Parse tool name + arguments, dispatch to engine |
+| `tools/call` | Parse tool name + arguments, dispatch to engine via `rpc.DispatchForMCP` |
 | `notifications/initialized` | No-op (ack) |
 | `ping` | No-op (ack) |
 
-The `tools/call` handler routes to the engine via the JSON-RPC dispatcher (`pkg/rpc`).
+The `tools/call` handler routes to the engine through the JSON-RPC dispatcher (`pkg/rpc.DispatchForMCP`), with `tachyon_chain_list` short-circuited directly to `eng.ChainList()`.
 
 ---
 
@@ -94,7 +92,7 @@ The `tools/call` handler routes to the engine via the JSON-RPC dispatcher (`pkg/
 
 | What to change | Where |
 |---|---|
-| Add MCP tool | `pkg/mcp/tools.go` — add to `ToolNames` and `Tools()` |
-| Change protocol version | `pkg/mcp/server.go` — `initialize` handler |
-| Add MCP capability | `pkg/mcp/server.go` — `initialize` capabilities map |
-| Change error format | `pkg/mcp/server.go` — `FormatToolError` |
+| Add MCP tool | `pkg/mcp/tools.go` - add to `ToolNames` and `Tools()` |
+| Change protocol version | `pkg/mcp/server.go` - `initialize` handler |
+| Add MCP capability | `pkg/mcp/server.go` - `initialize` capabilities map |
+| Change error format | `pkg/mcp/server.go` - `FormatToolError` |

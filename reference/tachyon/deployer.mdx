@@ -1,6 +1,6 @@
 ---
 title: "Deployer"
-description: "The deployer plans and executes intent-based contract deployments with idempotency guarantees. It handles both plain contract creation and CREATE2 deterministic deployments, wit..."
+description: "The deployer plans and executes intent-based contract deployments with idempotency guarantees. It handles plain creation and CREATE2 deterministic deployments."
 ---
 
 **Source file:** `internal/deployer/deployer.go`
@@ -13,20 +13,22 @@ The deployer plans and executes intent-based contract deployments with idempoten
 
 ### Idempotency by key, not by state
 
-Deployments are keyed by `idempotency_key + chain_id`. Before broadcasting, the deployer checks the registry for an existing record. If found and confirmed on-chain (bytecode > 0 at the address), it returns the existing deployment with `Existing: true`. This makes retries safe: the same key always returns the same address.
+Deployments are keyed by `idempotency_key + chain_id`. Before broadcasting, the deployer checks the registry for an existing record. If found and confirmed on-chain (bytecode > 0 at the address via `eth_getCode`), it returns the existing deployment with `Existing: true`. This makes retries safe: the same key always returns the same address.
 
 ### CREATE2 support
 
 CREATE2 deployments use a deterministic factory pattern. The deployer:
 
-1. Computes the deterministic address from `deployer` (factory), `salt` (32 bytes), and `keccak256(initCode)`
-2. Checks if code already exists at that address
+1. Computes the deterministic address from `deployer` (factory), `salt` (32 bytes hex), and `keccak256(initCode)`
+2. Checks if code already exists at that address (returns existing if confirmed)
 3. If not, builds a factory call: `to = deployer`, `data = salt ++ initCode`
 4. After broadcast, uses the precomputed `create2Addr` as the deployment address (not the receipt's `ContractAddress`, which is the factory call's receipt)
 
 ```go
 func computeCreate2(deployerHex, saltHex string, initCode []byte) (common.Address, error)
 ```
+
+The salt must be exactly 32 bytes. The deployer address must be non-empty. The init code hash is computed via `crypto.Keccak256`.
 
 ### On-chain confirmation
 
@@ -54,11 +56,13 @@ func packConstructor(art registry.ArtifactRecord, args json.RawMessage) ([]byte,
 
 The deployer delegates signing and broadcasting to the wallet gate:
 
-1. `Wallet.Authorize(capabilityToken, spendCap, chainID)` — policy check
-2. `Wallet.Sign(ctx, client, intent, policy)` — sign or delegate
-3. If `RawTx` returned: `client.SendRawTransaction(ctx, res.RawTx)` — broadcast
+1. `Wallet.Authorize(capabilityToken, spendCap, chainID)` - policy check
+2. `Wallet.Sign(ctx, client, intent, policy)` - sign or delegate
+3. If `RawTx` returned: `client.SendRawTransaction(ctx, res.RawTx)` - broadcast
 4. If `TxHash` returned: signer already broadcast (embedded wallet mode)
-5. `client.WaitReceipt(ctx, txHash)` — poll for confirmation
+5. `client.WaitReceipt(ctx, txHash)` - poll for confirmation
+
+The `TxIntent` carries an optional `AuthToken` for forwarded embedded-wallet bearer tokens (multi-tenant shared engine).
 
 ### Registry write-back
 
@@ -81,7 +85,7 @@ registry.DeploymentRecord{
 ## Deployment flow
 
 ```
-DeployRequest{idempotency_key, chain_id, contract, constructor_args, create2?}
+DeployRequest{idempotency_key, chain_id, contract, constructor_args, create2?, wallet_token?}
     │
     ▼
 Check registry for existing deployment by key+chain
@@ -94,13 +98,13 @@ Check registry for existing deployment by key+chain
     Resolve artifact from registry (projectID:contract)
         │
         ▼
-    Resolve chain profile
+    Resolve chain profile (by chain_id, inline rpc, or active chain)
         │
         ▼
     Pack constructor args + bytecode
         │
         ▼
-    Build TxIntent (plain or CREATE2)
+    Build TxIntent (plain creation or CREATE2 factory call)
         │
         ▼
     Authorize via wallet policy gate
@@ -137,8 +141,8 @@ Check registry for existing deployment by key+chain
 
 | What to change | Where |
 |---|---|
-| Add deployment metadata | `pkg/types/deploy.go` — `DeployRequest`/`DeployResponse` |
-| Change CREATE2 formula | `internal/deployer/deployer.go` — `computeCreate2` |
-| Add proxy deployment | New method — UUPS/transparent proxy pattern |
-| Change confirmation logic | `internal/deployer/deployer.go` — `confirmOnChain` |
-| Add multi-chain deploy | `internal/deployer/deployer.go` — loop over chain IDs |
+| Add deployment metadata | `pkg/types/deploy.go` - `DeployRequest`/`DeployResponse` |
+| Change CREATE2 formula | `internal/deployer/deployer.go` - `computeCreate2` |
+| Add proxy deployment | New method, UUPS/transparent proxy pattern |
+| Change confirmation logic | `internal/deployer/deployer.go` - `confirmOnChain` |
+| Add multi-chain deploy | `internal/deployer/deployer.go` - loop over chain IDs |

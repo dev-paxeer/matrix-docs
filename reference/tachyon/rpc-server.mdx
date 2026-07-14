@@ -1,6 +1,6 @@
 ---
 title: "RPC Server"
-description: "The JSON-RPC dispatcher routes tachyon_ methods to the engine. It is used by both the HTTP API (POST /rpc) and the MCP server (tools/call)."
+description: "The JSON-RPC 2.0 dispatcher routes tachyon_* methods to the engine. It is used by both the HTTP API (POST /rpc) and the MCP server (tools/call)."
 ---
 
 **Source file:** `pkg/rpc/server.go`
@@ -46,9 +46,9 @@ The engine returns `types.Envelope[T]`. The JSON-RPC layer passes this through a
 
 ### Standard JSON-RPC error codes
 
-- `-32700` — Parse error (malformed JSON)
-- `-32602` — Invalid params (type mismatch, missing field)
-- `-32601` — Method not found
+- `-32700` - Parse error (malformed JSON)
+- `-32602` - Invalid params (type mismatch, missing field)
+- `-32601` - Method not found
 
 Engine errors are not JSON-RPC errors. They are returned in the envelope's `error` field with `ok: false`. This preserves the engine's structured error taxonomy across all transports.
 
@@ -62,6 +62,6 @@ The JSON-RPC dispatcher accepts a `context.Context` and passes it to engine meth
 
 | What to change | Where |
 |---|---|
-| Add JSON-RPC method | `pkg/rpc/server.go` — add case in `Dispatch` |
-| Change error codes | `pkg/rpc/server.go` — `rpcError` struct |
-| Add batch support | `pkg/rpc/server.go` — parse array requests |
+| Add JSON-RPC method | `pkg/rpc/server.go` - add case in `Dispatch` |
+| Change error codes | `pkg/rpc/server.go` - `rpcError` struct |
+| Add batch support | `pkg/rpc/server.go` - parse array requests |

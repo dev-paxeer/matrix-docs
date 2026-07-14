@@ -1,146 +1,117 @@
 ---
 title: "Wallet"
-description: "The wallet subsystem provides signing backends and a policy gate. Two modes: self-hosted (operator holds the key) and embedded (Paxeer embedded wallet signs server-side via the..."
+description: "The wallet subsystem provides signing backends (self-hosted and embedded) with a policy gate that enforces spend caps, contract allow-lists, and chain allow-lists before every signature."
 ---
 
 **Source files:** `internal/wallet/wallet.go`, `internal/wallet/embedded.go`
 
-The wallet subsystem provides signing backends and a policy gate. Two modes: **self-hosted** (operator holds the key) and **embedded** (Paxeer embedded wallet signs server-side via the agent-native DID lane). Every signature passes a capability policy gate.
+The wallet subsystem provides signing backends with a policy gate. It supports two modes: `self_hosted` (operator holds the key locally) and `embedded` (delegates to the Paxeer embedded wallet over the agent-native DID lane). Every signature passes through a `Gate` that enforces spend caps, contract allow-lists, and chain allow-lists.
 
 ---
 
 ## Design decisions
 
-### Policy gate before signing
-
-The `Gate` struct wraps a `Signer` and a map of `Policy` profiles. Before any signing operation, `Gate.Authorize` resolves the requested `capability_token` to a policy, then `Gate.Sign` validates the intent against that policy:
-
-- **Spend cap:** `tx.Value` must not exceed `policy.SpendCapWei`
-- **Chain allow-list:** `chainID` must be in `policy.AllowedChains`
-- **Contract allow-list:** `intent.To` must be in `policy.AllowedContracts` (if set)
-
-The requester can only tighten the profile's spend cap, never raise it.
-
 ### Two wallet modes
 
-**Self-hosted** (`wallet.mode = "self_hosted"`):
-- The operator holds the ECDSA private key
-- Three signer variants: `raw` (hex key in config), `env` (key from environment variable), `keystore` (web3 secret-storage JSON + password)
-- Local signing: the daemon builds the tx (nonce, gas, EIP-1559 fees), signs with go-ethereum, returns raw RLP-encoded tx
-- The policy gate is enforced locally
+**Self-hosted (`self_hosted`):** Signs locally with an operator-held key. Three signer backends:
 
-**Embedded** (`wallet.mode = "embedded"`):
-- No local EVM keys. The daemon's ed25519 seed proves a `did:matrix:<label>:<keyfp>` identity
-- Signing and broadcasting are delegated to the Paxeer embedded wallet server-side
-- Custody policy (frozen, read-only, spend caps, allow-lists) is enforced by the wallet
-- Two sub-modes:
-  - **Single-tenant:** keyfile configured → daemon authenticates with its own DID
-  - **Multi-tenant:** keyfile empty → every request must carry a forwarded `WalletToken` (per-agent bearer)
+| Signer | Config key | Source |
+|---|---|---|
+| `raw` | `wallet.self_hosted.private_key` | Raw hex private key (last resort; file must be 0600) |
+| `env` | `wallet.self_hosted.private_key` | Reads from env var reference |
+| `keystore` | `wallet.self_hosted.keystore_path` + `keystore_password` | Decrypts a geth v3 web3 secret-storage JSON |
 
-### SignResult shape
+Backwards-compatible env shims: `TACHYON_DEV_PRIVATE_KEY` or `TACHYON_ALLOW_DEV_SIGNER=true` selects self-hosted mode automatically.
+
+**Embedded (`embedded`):** Delegates signing and broadcasting to the Paxeer embedded wallet over the agent-native DID lane. The daemon's ed25519 seed proves a `did:matrix:<label>:<keyfp>` identity; the EVM key stays server-side and the wallet enforces custody policy (frozen / read_only / spend caps / allow-lists).
+
+Two operating modes within embedded:
+
+- **Single-tenant** (keyfile set): loads the ed25519 seed, derives the agent DID, and authenticates with it. Used when one `tachyond` instance serves one agent.
+- **Multi-tenant token-only** (keyfile empty): holds no seed. Every signing request must carry a forwarded `TxIntent.AuthToken` (the per-agent bearer minted upstream). This is the shared-engine deployment: many agents, zero seeds on the box.
+
+Backwards-compatible env shims: `PAXEER_WALLET_TOKEN` or `MATRIX_EXECUTOR_KEY` selects embedded mode automatically.
+
+### Policy gate (Gate)
+
+The `Gate` wraps a `Signer` and a map of named `Policy` profiles:
 
 ```go
-type SignResult struct {
-    RawTx  []byte         // locally signed tx; caller must broadcast
-    TxHash string         // remote signer already broadcast
-    From   common.Address // signer address
+type Gate struct {
+    Signer   Signer
+    Profiles map[string]Policy
+}
+
+type Policy struct {
+    Name             string
+    SpendCapWei      *big.Int
+    AllowedContracts []common.Address
+    AllowedChains    []string
+    ChainID          string
 }
 ```
 
-Exactly one of `RawTx` or `TxHash` is populated. This unifies both modes: the caller either broadcasts the raw tx or waits for the remote tx hash.
+`Authorize(token, requestCap, chainID)` resolves a capability token to an effective policy:
+- When profiles are configured, an unknown token is denied
+- The request's spend cap can only tighten the profile's cap, never raise it
+- Chain and contract allow-lists are enforced
 
----
+`Sign(ctx, client, intent, policy)` validates the policy against the intent, then delegates to the signer.
 
-## Self-hosted signer
+### Signer interface
 
 ```go
-type LocalSigner struct {
-    key  *ecdsa.PrivateKey
-    addr common.Address
+type Signer interface {
+    Sign(ctx context.Context, client *evm.Client, intent TxIntent) (SignResult, error)
+    Address(ctx context.Context) (common.Address, error)
 }
 ```
 
-### Key loading
+### SignResult
 
-```go
-func NewLocalSigner(w config.WalletConfig) (*LocalSigner, error)
+Exactly one of `RawTx` / `TxHash` is populated:
+- `RawTx`: a locally signed transaction the caller must broadcast (self-hosted mode)
+- `TxHash`: the signer already broadcast (remote send); caller waits for receipt (embedded mode)
+
+### Embedded wallet handshake
+
+The embedded signer authenticates via ed25519 challenge/verify:
+
+```
+POST /v1/agent/auth/challenge {did} -> {message, nonce}
+ed25519-sign(message)
+POST /v1/agent/auth/verify {did, public_key, nonce, signature} -> {token}
+POST /v1/agent/send {tx} (Bearer token) -> {tx_hash, address}
 ```
 
-- `SignerKeystore`: decrypts web3 secret-storage JSON with password
-- `SignerRaw` / `SignerEnv` / default: parses hex ECDSA key
-- Address derived from public key via `crypto.PubkeyToAddress`
+The token is cached and refreshed automatically on 401 responses.
 
-### Signing
+### TxIntent
 
 ```go
-func (s *LocalSigner) Sign(ctx context.Context, client *evm.Client, intent TxIntent) (SignResult, error)
-```
-
-1. Fetches chain ID from client (or cached)
-2. Builds unsigned tx via `client.BuildTx` (nonce, gas estimate, EIP-1559 or legacy)
-3. Signs with `evm.SignTxKey` (latest signer for chain ID)
-4. Returns `RawTx` + `From` address
-
----
-
-## Embedded signer
-
-```go
-type EmbeddedSigner struct {
-    baseURL string
-    label   string
-    priv    ed25519.PrivateKey
-    pubHex  string
-    did     string
-    http    *http.Client
-    token   string // cached bearer
+type TxIntent struct {
+    From      string
+    To        string     // "" => contract creation
+    Data      []byte
+    Value     *big.Int
+    Gas       uint64     // 0 => estimate
+    AuthToken string     // forwarded embedded-wallet bearer for multi-tenant
 }
 ```
 
-### Authentication (single-tenant)
-
-The embedded signer uses an ed25519 challenge/verify handshake:
-
-1. `POST /v1/agent/auth/challenge {did}` → `{message, nonce}`
-2. `ed25519.Sign(priv, message)`
-3. `POST /v1/agent/auth/verify {did, public_key, nonce, signature}` → `{token}`
-4. Token cached; re-authenticates on 401
-
-### Signing
-
-```go
-func (s *EmbeddedSigner) Sign(ctx context.Context, _ *evm.Client, intent TxIntent) (SignResult, error)
-```
-
-- Builds tx payload map (`to`, `data`, `value`, `gas`)
-- `POST /v1/agent/send {tx}` (Bearer token)
-- Returns `TxHash` + `From` address
-- The EVM key, nonce, gas, and broadcast all live server-side
-
-### Multi-tenant mode
-
-When `keyfile` is empty, the signer holds no seed. Every `Sign` call must provide `intent.AuthToken` (a forwarded per-agent bearer). The daemon acts as a stateless proxy:
-
-```go
-func (s *EmbeddedSigner) send(ctx context.Context, token string, body, out any) error
-```
-
-If `token` is non-empty, it is used verbatim. Otherwise, the signer's own token is used (single-tenant).
-
 ---
 
-## Policy profiles
+## NewGate construction
 
-Profiles are defined in `tachyon.config.kvx` under `[policy.*]` sections:
-
-```toml
-[policy.default]
-spend_cap_wei = "100000000000000000"  # 0.1 ETH
-allow         = []                     # empty = any destination
-chains        = ["paxeer-mainnet"]
+```go
+func NewGate(cfg config.Config) (*Gate, error)
 ```
 
-`buildProfiles` converts config profiles into `Policy` structs with parsed spend caps and address lists.
+- `self_hosted` mode: creates a `LocalSigner` from the wallet config
+- `embedded` mode: creates an `EmbeddedSigner` from the wallet config
+- Default (no mode): returns a nil-signer gate (read-only verbs still work; signing verbs return `WALLET_NOT_CONFIGURED`)
+
+Policy profiles are built from `config.Policies` (`policy.*` sections in `tachyon.config.kvx`).
 
 ---
 
@@ -148,8 +119,7 @@ chains        = ["paxeer-mainnet"]
 
 | What to change | Where |
 |---|---|
-| Add signer mode | `internal/wallet/wallet.go` — `NewGate` switch |
-| Add policy dimension | `internal/wallet/wallet.go` — `Policy` struct + `validatePolicy` |
-| Change embedded API | `internal/wallet/embedded.go` — `defaultEmbeddedAPI` |
-| Add hardware wallet | New file `internal/wallet/hardware.go` — implement `Signer` |
-| Change key loading | `internal/wallet/wallet.go` — `NewLocalSigner` |
+| Add signer backend | New type implementing `Signer` interface |
+| Add policy check | `internal/wallet/wallet.go` - `validatePolicy` |
+| Change embedded handshake | `internal/wallet/embedded.go` - `authenticate` |
+| Add new wallet mode | `internal/config/config.go` - `WalletMode*` constants + `NewGate` switch |

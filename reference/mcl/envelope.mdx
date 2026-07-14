@@ -1,119 +1,140 @@
 ---
 title: "Envelope & Wire Protocol"
-description: "Package matrix/mcl/envelope is the canonical wire codec for all 15 MCL message kinds. Every message Matrix sends or receives rides inside an Envelope: a typed header, an opaque..."
+description: "Every MCL message rides inside an Envelope: typed header, opaque CBOR body, ed25519 signature over canonical CBOR with Signature cleared. There are exactly 15 message kinds."
 ---
 
-Package `matrix/mcl/envelope` is the canonical wire codec for all 15 MCL message kinds. Every message Matrix sends or receives rides inside an `Envelope`: a typed header, an opaque CBOR body, and an ed25519 signature over the canonical encoding.
+Every MCL message rides inside an Envelope: typed header, opaque CBOR body, ed25519 signature over the canonical CBOR encoding with Signature cleared. There are exactly 15 message kinds. No chat.message kind exists by design.
 
-Source files: `MCL/envelope/envelope.go`, `MCL/envelope/kinds.go`, `MCL/envelope/body.go`, `MCL/envelope/json.go`, `MCL/envelope/keyresolver.go`.
+Source files: `envelope/envelope.go`, `envelope/kinds.go`, `envelope/body.go`, `envelope/json.go`, `envelope/keyresolver.go`.
 
 ---
 
-## Design decisions
+## Envelope struct
 
-**CBOR, not JSON, on the wire.** The body and envelope headers are encoded with `github.com/fxamacker/cbor/v2` using `CoreDetEncOptions()` — the canonical deterministic mode. This gives compact binary encoding with byte-identical output for the same input, which is required for signature stability.
+```go
+type Envelope struct {
+    SchemaVersion   uint8           `cbor:"0,keyasint"`  // replay protection
+    ProtocolVersion string          `cbor:"1,keyasint"`  // "mcl/0.1"
+    Kind            string          `cbor:"2,keyasint"`  // message kind
+    ID              string          `cbor:"3,keyasint"`  // ULID
+    At              string          `cbor:"4,keyasint"`  // ISO-8601 timestamp
+    From            string          `cbor:"5,keyasint"`  // matrix://agent/<did> or matrix://user/<did>
+    To              string          `cbor:"6,keyasint,omitempty"`
+    Intent          string          `cbor:"7,keyasint"`  // matrix://intent/<id>
+    CorrelationID   string          `cbor:"8,keyasint,omitempty"`
+    CausationID     string          `cbor:"9,keyasint,omitempty"`
+    Body            cbor.RawMessage `cbor:"10,keyasint"` // canonical CBOR of typed body
+    Signature       []byte          `cbor:"11,keyasint,omitempty"` // ed25519 sig
+}
+```
 
-**Body is opaque.** The `Body` field is `cbor.RawMessage` — the envelope codec doesn't know or care what's inside. This allows a single round-trip to preserve body bytes exactly, which is what the D11 replay invariant requires.
+CBOR field tags are integer `keyasint`. New fields land at the next unused integer; deletions require a `SchemaVersion` bump.
 
-**Integer keyasint CBOR tags.** Every field on `Envelope` uses integer CBOR keys (0, 1, 2, ...). Adding a new field at an unused integer tag is non-breaking. Deleting a field requires a `SchemaVersion` bump.
+---
 
-**SchemaVersion in signed bytes.** The `SchemaVersion` field is included in the unsigned bytes (the thing that gets signed). This means a signature from schema v1 cannot be verified as valid under schema v2 — replay attacks across schema versions are blocked at the cryptographic level.
+## Encoding posture
 
-**JSON on disk.** For journal/logs readability, envelopes are written to disk as JSON via `EnvelopeJSON` (in `json.go`). The JSON representation is a thin wrapper that re-encodes fields — it's never the canonical form used for signatures.
+| Surface | Format | Purpose |
+|---|---|---|
+| On wire | Canonical CBOR (`CoreDetEncOptions`) | Compact, signature-stable |
+| On disk | JSON (`EnvelopeJSON`) | Human-readable journal/logs |
+| Signed bytes | Canonical CBOR with Signature cleared | ed25519 sign/verify input |
+
+The Body is held as `cbor.RawMessage` so a single round-trip preserves byte equality (required for replay determinism).
 
 ---
 
 ## The 15 message kinds
 
-There is no `chat.message` kind — that would be the bug MCL is designed to prevent. Every user input is an `intent.draft` (new goal) or an `intent.answer`/`intent.correct` (continuing an existing one).
-
-| Kind | Direction | Purpose |
+| Kind | Direction | Description |
 |---|---|---|
-| `intent.draft` | User → Agent | Initial NL goal + optional slot pre-fills |
-| `intent.compiled` | Agent → User | Typed Intent IR for user review |
-| `intent.clarify` | Agent → User | Structured questions for unknowns |
-| `intent.answer` | User → Agent | Slot patches answering clarify questions |
-| `intent.accept` | User → Agent | Signed sign-off — transitions to `accepted` |
-| `plan.proposed` | Agent → User | Decomposition into steps before execution |
-| `plan.step` | Agent → Agent/Tool | Single step execution (executor-internal) |
-| `plan.output` | Agent → User | Streaming intermediate output |
-| `intent.correct` | User → Agent | Patch an Intent or plan mid-flight |
-| `intent.dispatch` | Agent → Agent | Sub-intent to a delegated agent |
-| `intent.attest` | Agent → User/Chain | Signed completion receipt |
-| `intent.fail` | Agent → User | Typed failure |
-| `intent.cancel` | User → Agent | Revoke before completion |
-| `policy.gate` | Agent → User | Human-in-loop checkpoint |
-| `policy.gate.resolve` | User → Agent | Approve or deny a gate |
+| `intent.draft` | User -> agent | Initial NL goal + slot pre-fills |
+| `intent.compiled` | Agent -> user | Typed Intent IR for review |
+| `intent.clarify` | Agent -> user | Structured questions for unknowns |
+| `intent.answer` | User -> agent | Answers to clarify questions (slot patches) |
+| `intent.accept` | User -> agent | Signed sign-off on the IR |
+| `plan.proposed` | Agent -> user | Decomposition into steps |
+| `plan.step` | Agent -> agent/tool | Execution of a single step |
+| `plan.output` | Agent -> user | Streaming intermediate output |
+| `intent.correct` | User -> agent | Patch an Intent or plan mid-flight |
+| `intent.dispatch` | Agent -> agent | Sub-intent to a delegated agent |
+| `intent.attest` | Agent -> user/chain | Signed completion receipt |
+| `intent.fail` | Agent -> user | Typed failure |
+| `intent.cancel` | User -> agent | Revoke before completion |
+| `policy.gate` | Agent -> user | Human-in-loop checkpoint |
+| `policy.gate.resolve` | User -> agent | Approve/deny gate |
+
+There is **no** `chat.message` kind by design. All user input is `intent.draft` (new) or `intent.answer` / `intent.correct` (continuing).
 
 ---
 
-## Envelope structure
+## Typed body structs
 
+Each kind has a dedicated Go struct. Key examples:
+
+### IntentDraftBody
 ```go
-type Envelope struct {
-    SchemaVersion   uint8          // field 0 — schema version for replay protection
-    ProtocolVersion string         // field 1 — "mcl/0.1"
-    Kind            string         // field 2 — one of the 15 kinds
-    ID              string         // field 3 — ULID for this message
-    At              string         // field 4 — ISO-8601 timestamp
-    From            string         // field 5 — sender principal (matrix://agent/<did>)
-    To              string         // field 6 — recipient principal (omitempty)
-    Intent          string         // field 7 — matrix://intent/<id>
-    CorrelationID   string         // field 8 — request/response correlation (omitempty)
-    CausationID     string         // field 9 — causation trace (omitempty)
-    Body            cbor.RawMessage // field 10 — kind-specific payload
-    Signature       []byte         // field 11 — ed25519 sig over UnsignedBytes (omitempty)
+type IntentDraftBody struct {
+    Prose          string            `cbor:"0,keyasint"`
+    SlotValues     map[string]string `cbor:"1,keyasint,omitempty"`
+    PreferredSkill string            `cbor:"2,keyasint,omitempty"`
 }
 ```
 
-Every message belongs to exactly one Intent (`Intent` field required). This is how the cortex journal maintains per-intent event streams.
+### IntentAcceptBody
+```go
+type IntentAcceptBody struct {
+    IntentHash      string `cbor:"0,keyasint"`  // sha256 of canonical Intent
+    AcceptedAt      string `cbor:"1,keyasint"`  // ISO-8601
+    AnchorRequested bool   `cbor:"2,keyasint,omitempty"`
+}
+```
 
-`CorrelationID` links request/response pairs — `intent.clarify.ID` → `intent.answer.CorrelationID`. `CausationID` traces multi-hop causation chains for audit.
+### IntentAttestBody
+```go
+type IntentAttestBody struct {
+    Outcome      string   `cbor:"0,keyasint"` // "success", "failure", "partial"
+    CitedURIs    []string `cbor:"1,keyasint,omitempty"`
+    EvidenceJSON []byte   `cbor:"2,keyasint,omitempty"`
+    CompletedAt  string   `cbor:"3,keyasint"`
+    AnchorTx     string   `cbor:"4,keyasint,omitempty"`
+}
+```
 
-Required header fields: `ID`, `At`, `From`, `Intent`. Missing any of these causes `NewEnvelope` / `Sign` / `Verify` to return an error.
+### IntentFailBody
+```go
+type IntentFailBody struct {
+    Reason       string   `cbor:"0,keyasint"` // structured failure reason
+    Message      string   `cbor:"1,keyasint,omitempty"`
+    EvidenceJSON []byte   `cbor:"2,keyasint,omitempty"`
+    FailedAt     string   `cbor:"3,keyasint"`
+    PartialURIs  []string `cbor:"4,keyasint,omitempty"`
+}
+```
+
+Structured failure reasons: `blocked_by_constraint`, `tool_error`, `policy_denied`, `deadline_exceeded`, `budget_exceeded`, `subagent_failed`, `ambiguous_after_clarify`, `correction_invalid`, `x:custom`.
 
 ---
 
-## Creating and signing an envelope
+## Signing and verification
 
 ```go
-// Create an unsigned envelope from a typed body
-env, err := envelope.NewEnvelope(envelope.KindIntentDraft, envelope.IntentDraftBody{
-    Prose:      "Build a deployment pipeline for my Node.js app",
-    SlotValues: map[string]string{"target": "my-app"},
-})
+// Sign sets env.Signature to ed25519.Sign(priv, UnsignedBytes(env))
+func Sign(env *Envelope, priv ed25519.PrivateKey) error
 
-// Populate header fields
-env.ID        = ulid.Make().String()
-env.At        = time.Now().UTC().Format(time.RFC3339)
-env.From      = "matrix://agent/" + actorDID
-env.To        = "matrix://agent/" + executorDID
-env.Intent    = "matrix://intent/" + intentID
+// VerifySignature checks env.Signature against pub over UnsignedBytes(env)
+func VerifySignature(env *Envelope, pub ed25519.PublicKey) error
 
-// Sign with actor's ed25519 private key
-err = envelope.Sign(env, privateKey)
+// Verify runs the full chain: SchemaVersion, required fields, kind validation,
+// KeyResolver lookup, signature check
+func Verify(env *Envelope, resolver KeyResolver) error
 ```
 
-`NewEnvelope` validates that the body type matches the kind via the `kindBodyType` map. Mismatched types return `ErrBodyTypeMismatch` immediately.
+`UnsignedBytes` returns the canonical CBOR encoding with `Signature` explicitly cleared. `SchemaVersion` is retained so signatures from one schema cannot be replayed under another.
 
 ---
 
-## Verifying an envelope
-
-```go
-err := envelope.Verify(env, keyResolver)
-```
-
-`Verify` runs the full chain:
-1. `SchemaVersion` matches the package constant
-2. Required header fields are populated
-3. `Kind` is in the closed 15-kind set
-4. `KeyResolver.ResolveKey(env.From)` returns a public key
-5. `ed25519.Verify(pub, UnsignedBytes(env), env.Signature)` passes
-
-Body shape is not validated by `Verify` — that's `ValidateBody`'s job after you decode. `Verify` only checks "this was sent by `env.From` and hasn't been tampered with."
-
-### KeyResolver interface
+## KeyResolver
 
 ```go
 type KeyResolver interface {
@@ -121,224 +142,38 @@ type KeyResolver interface {
 }
 ```
 
-Implementations typically look up the DID document for the principal and return the public key. For tests, `envelope.StaticKeyResolver(map[string]ed25519.PublicKey{...})` works.
-
----
-
-## Decoding the body
-
-```go
-// Decode into the matching typed struct
-var body envelope.IntentDraftBody
-err := env.DecodeBody(&body)
-
-// Or use ValidateBody for strict kind↔type checking in one step
-typed, err := envelope.ValidateBody(env)
-if draft, ok := typed.(*envelope.IntentDraftBody); ok {
-    // ...
-}
-
-// Or allocate the right type dynamically
-out := envelope.NewTypedBody(env.Kind) // returns *IntentDraftBody etc.
-err = env.DecodeBody(out)
-```
-
----
-
-## Body types reference
-
-### IntentDraftBody
-
-```go
-type IntentDraftBody struct {
-    Prose          string            // NL goal
-    SlotValues     map[string]string // pre-filled slots from UI form
-    PreferredSkill string            // optional skill hint (matrix://skill/... ref)
-}
-```
-
-### IntentCompiledBody
-
-```go
-type IntentCompiledBody struct {
-    IntentJSON       []byte // canonical JSON of ir.Intent
-    CompileLatencyMs int64  // compilation time (for display)
-}
-```
-
-The `IntentJSON` is the canonical JSON encoding of the `ir.Intent` struct. Receivers decode with `json.Unmarshal` into `ir.Intent`. This is not re-encoded in CBOR because the canonical JSON IS the content address — re-encoding would lose that property.
-
-### IntentClarifyBody
-
-```go
-type IntentClarifyBody struct {
-    Questions []ClarifyQuestion // one per unmet unknown
-}
-
-type ClarifyQuestion struct {
-    UnknownID string   // matches Intent.Unknowns[].ID
-    Field     string   // SlotPath the answer patches
-    Prompt    string   // user-facing question text
-    Type      string   // expected answer type
-    Required  bool     // must the user answer this?
-    Options   []string // enum-like suggestions
-    Default   string   // suggested default
-}
-```
-
-### IntentAnswerBody
-
-```go
-type IntentAnswerBody struct {
-    Patches  []byte // RFC 6902 JSON Patch bytes
-    AnswerOf string // correlation_id of the intent.clarify being answered
-}
-```
-
-Patches are RFC 6902 applied against the Intent IR. The `patch/` package handles the typed `SlotPatch → RFC 6902` compilation (D8).
-
-### IntentAcceptBody
-
-```go
-type IntentAcceptBody struct {
-    IntentHash      string // sha256 of canonical-JSON Intent
-    AcceptedAt      string // ISO-8601
-    AnchorRequested bool   // opt-in chain anchoring
-}
-```
-
-The outer `Envelope.Signature` is the acceptance signature. The body pins `IntentHash` so receivers can verify the signed hash matches the local IR before treating the acceptance as valid.
-
-### PlanProposedBody
-
-```go
-type PlanProposedBody struct {
-    PlanJSON []byte // canonical JSON of ir.PlanTree
-}
-```
-
-Same posture as `IntentCompiledBody` — the canonical JSON is the content address.
-
-### PlanStepBody (executor-internal)
-
-```go
-type PlanStepBody struct {
-    PlanID    string
-    NodeID    string
-    Status    string // "started", "completed", "failed", "cancelled"
-    Result    []byte // opaque JSON step output
-    Error     string
-    LatencyMs int64
-}
-```
-
-Rarely user-visible. Used for inter-component messaging within the executor.
-
-### PlanOutputBody (streaming)
-
-```go
-type PlanOutputBody struct {
-    PlanID   string
-    NodeID   string
-    Sequence uint64 // monotonic counter within (PlanID, NodeID)
-    Chunk    []byte
-    Channel  string // "stdout", "stderr", "result", "progress"
-    Final    bool   // marks last chunk
-}
-```
-
-The only streaming kind. Multiple `plan.output` messages may share the same PlanID + NodeID and are distinguished by `Sequence`. `Final=true` marks the last chunk in the stream.
-
-### IntentCorrectBody
-
-```go
-type IntentCorrectBody struct {
-    Target    string // "intent" or "plan"
-    Patches   []byte // RFC 6902 JSON Patch bytes
-    Reason    string // structured reason code
-    RetryFrom string // PlanNode.ID to resume from (empty = restart from root)
-}
-```
-
-### IntentDispatchBody
-
-```go
-type IntentDispatchBody struct {
-    SubIntentJSON  []byte // canonical JSON of child ir.Intent
-    ScopeURI       string // CortexScope grant (empty for in-process)
-    PaymentChannel string // payment stream for external dispatch (empty for in-process)
-}
-```
-
-### IntentAttestBody
-
-```go
-type IntentAttestBody struct {
-    Outcome     string   // "success", "failure", "partial"
-    CitedURIs   []string // load-bearing cortex URIs → feeds salience EMA
-    EvidenceJSON []byte  // structured evidence
-    CompletedAt string
-    AnchorTx    string   // chain tx hash (empty if not anchored)
-}
-```
-
-`CitedURIs` are the `matrix://cortex/...` URIs that were load-bearing during execution. They feed into `cortex.Attest()` for salience EMA updates — memories that were useful get higher salience for future retrievals.
-
-### IntentFailBody
-
-```go
-type IntentFailBody struct {
-    Reason       string   // structured failure reason
-    Message      string   // human-readable elaboration
-    EvidenceJSON []byte
-    FailedAt     string
-    PartialURIs  []string // work products that landed before failure
-}
-```
-
-Failure reasons: `blocked_by_constraint`, `tool_error`, `policy_denied`, `deadline_exceeded`, `budget_exceeded`, `subagent_failed`, `ambiguous_after_clarify`, `correction_invalid`, `x:custom`.
-
-### PolicyGateBody / PolicyGateResolveBody
-
-```go
-type PolicyGateBody struct {
-    RuleRef   string   // matrix://rule/<id>
-    PlanID    string
-    NodeID    string
-    Question  string
-    Options   []string // empty = free text
-    ExpiresAt string   // auto-deny deadline
-}
-
-type PolicyGateResolveBody struct {
-    GateOf     string // correlation_id of the policy.gate
-    Decision   string // "approve" or "deny"
-    Answer     string // chosen option or free-text answer
-    ResolvedAt string
-}
-```
+The `principal` format is `matrix://agent/<did>` or `matrix://user/<did>`. Implementations live in the agent runtime / executor / tools/registry layer. The envelope package provides `StaticKeyResolver` for tests.
 
 ---
 
 ## Self-hash and content addressing
 
 ```go
-hash, err := envelope.SelfHash(env)
+func SelfHash(env *Envelope) (string, error) // sha256(UnsignedBytes)
 ```
 
-Returns `sha256(UnsignedBytes(env))` as a hex string. Works before or after signing. Used as the content-address for journal storage and as the Merkle anchoring input when the agent posts an `intent.attest` on-chain.
+The self-hash is a content-address for journal storage and Merkle anchoring input. It does not require the envelope to be signed.
 
 ---
 
-## Encoding round-trip
+## On-disk JSON representation
+
+For journal/logs readability, `EnvelopeJSON` renders an envelope as JSON with typed body fields. The signed bytes are always the canonical CBOR; JSON is purely for human/debug convenience.
 
 ```go
-// Encode to wire bytes (CBOR, including signature)
-wire, err := envelope.Encode(env)
-
-// Decode from wire bytes
-var env2 envelope.Envelope
-err = envelope.Decode(wire, &env2)
+type JSONEnvelope struct {
+    SchemaVersion   uint8           `json:"schema_version"`
+    ProtocolVersion string          `json:"v"`
+    Kind            string          `json:"kind"`
+    ID              string          `json:"id"`
+    At              string          `json:"at"`
+    From            string          `json:"from"`
+    Intent          string          `json:"intent"`
+    Body            json.RawMessage `json:"body"`
+    Signature       string          `json:"signature,omitempty"` // base64
+    SelfHash        string          `json:"self_hash,omitempty"` // sha256 hex
+    // ...
+}
 ```
 
-The canonical enc/dec modes are `cbor.CoreDetEncOptions()` — the same options used in the cortex scope codec. They guarantee byte-identical encoding for the same logical value.
+`EnvelopeFromJSON` round-trips the JSON back to a canonical CBOR Envelope, cross-checking the self-hash against the on-disk value.

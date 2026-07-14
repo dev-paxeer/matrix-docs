@@ -1,6 +1,6 @@
 ---
 title: "Engine"
-description: "The engine is the single implementation of all tachyon verbs. It is a flat struct that wires together the compiler, tester, simulator, deployer, wallet gate, chain manager, and..."
+description: "The engine is the single implementation of all tachyon verbs. It wires together the compiler, tester, simulator, deployer, wallet gate, chain manager, and registry."
 ---
 
 **Source files:** `internal/engine/engine.go`, `internal/engine/workdir.go`
@@ -28,9 +28,11 @@ type Engine struct {
 }
 ```
 
+The `Version` constant (`"0.1.0"`) is surfaced on health checks and the MCP `initialize` response.
+
 ### Envelope wrapping
 
-Every verb returns `types.Envelope[T]` — a uniform JSON shape:
+Every verb returns `types.Envelope[T]` - a uniform JSON shape:
 
 ```json
 { "ok": true, "data": { ... } }
@@ -52,21 +54,27 @@ This lets agents inspect failure details without a second round-trip.
 
 When `CompileRequest.Sources` or `TestRequest.Sources` is non-empty, the engine materializes the source set into an ephemeral Foundry project:
 
-1. Creates a temp directory
+1. Creates a temp directory (`tachyon-src-*`)
 2. Writes uploaded files (with path sanitization via `safeRel`)
-3. Symlinks the baked dependency tree (`lib/` → box lib, `.oz/` → box contracts)
-4. Generates `foundry.toml` and `remappings.txt` if not provided
-5. Derives a deterministic `ProjectID` from the source set (SHA-256 of sorted paths+contents)
+3. Symlinks the baked dependency tree (`lib/` points to box lib, `.oz/` points to box contracts)
+4. Generates `foundry.toml` and `remappings.txt` if not provided by the caller
+5. Derives a deterministic `ProjectID` from the source set (SHA-256 of sorted paths + contents)
 6. Runs forge in the temp dir
 7. Cleans up via deferred `cleanup()`
 
 The deterministic `ProjectID` means a compile and a later deploy/call resolve the same registry entries without the caller threading a path-derived id.
 
+The remappings link:
+- `@openzeppelin/contracts/` to `.oz/` (the box's OpenZeppelin corpus)
+- `forge-std/` to `lib/forge-std/src/`
+- `erc4626-tests/` to `lib/erc4626-tests/`
+- `halmos-cheatcodes/` to `lib/halmos-cheatcodes/src/`
+
 ### Conservative EVM version default
 
 `defaultEVMVersion = "shanghai"` is used for uploaded-source compiles when the caller does not pin one. This is deliberate: Paxeer mainnet (chain 125) and many other EVM chains are pre-Cancun. solc 0.8.27's default `"cancun"` emits the `MCOPY` opcode (`0x5E`), which causes `"invalid opcode: opcode 0x5e not defined"` reverts on pre-Cancun chains. `"shanghai"` still emits `PUSH0` (which Paxeer supports) but no Cancun-only opcodes.
 
-Callers can override per-chain via `CompileRequest.EVMVersion` (e.g., `"cancun"` for a chain that supports it, or `"paris"` for a PUSH0-less node).
+Callers can override per-chain via `CompileRequest.EVMVersion` or `TestRequest.EVMVersion` (e.g., `"cancun"` for a chain that supports it, or `"paris"` for a PUSH0-less node).
 
 ---
 
@@ -79,7 +87,7 @@ func (e *Engine) Compile(ctx context.Context, req types.CompileRequest) types.En
 ```
 
 - If `req.Sources` is non-empty: materializes ephemeral workdir, derives `ProjectID`, runs forge there
-- Otherwise: uses `req.ProjectRoot` (or engine default), runs forge in place
+- Otherwise: uses `req.ProjectRoot` (or engine default)
 - Collects artifacts from `out/`, normalizes ABI/bytecode/compiler metadata
 - Indexes artifacts in registry
 - Returns `ProjectID` + artifact list
@@ -90,10 +98,10 @@ func (e *Engine) Compile(ctx context.Context, req types.CompileRequest) types.En
 func (e *Engine) Test(ctx context.Context, req types.TestRequest) types.Envelope[types.TestResponse]
 ```
 
-- Same source-upload logic as Compile
+- Same source-upload logic as Compile (including EVM version pinning)
 - Runs `forge test --json`
 - Parses NDJSON or single JSON output into `TestResponse` with suite/case granularity
-- Returns partial results even when tests fail
+- Returns partial results even when tests fail (pass/fail counts in `data`)
 
 ### Simulate
 
@@ -103,7 +111,8 @@ func (e *Engine) Simulate(ctx context.Context, req types.SimulateRequest) types.
 
 - Resolves chain profile (from `chain_id`, `rpc_url`, or active registry entry)
 - Dials RPC, runs `eth_call` with 30s timeout
-- If `req.Trace`: runs `debug_traceCall` when supported
+- Runs gas estimation alongside the call
+- If `req.Trace`: runs `debug_traceCall` with `disableStorage: true`
 - Returns result hex, gas estimate, revert reason, optional trace
 
 ### Deploy
@@ -113,11 +122,11 @@ func (e *Engine) Deploy(ctx context.Context, req types.DeployRequest) types.Enve
 ```
 
 - Checks registry for existing deployment by `idempotency_key` + `chain_id`
-- If found and confirmed on-chain: returns existing address (`Existing: true`)
+- If found and confirmed on-chain (bytecode > 0): returns existing address (`Existing: true`)
 - Resolves artifact from registry by `contract` + `ProjectID`
 - Packs constructor args via `abienc.PackConstructorArgs`
 - Builds `TxIntent` (plain creation or CREATE2 factory call)
-- Authorizes via wallet policy gate
+- Authorizes via wallet policy gate (`Wallet.Authorize`)
 - Signs and broadcasts, waits for receipt
 - Records deployment in registry
 
@@ -127,9 +136,10 @@ func (e *Engine) Deploy(ctx context.Context, req types.DeployRequest) types.Enve
 func (e *Engine) Call(ctx context.Context, req types.CallRequest) types.Envelope[types.CallResponse]
 ```
 
-- Resolves calldata: ABI-encoded from `Method` + `Args` (with ABI from inline or registry), or pre-encoded hex `Data`
+- Resolves calldata: ABI-encoded from `Method` + `Args` (with ABI from inline field or registry by `Contract` + `ProjectID`), or pre-encoded hex `Data`
 - If `SimulateOnly`: runs `eth_call` via simulator, returns result/revert
 - Otherwise: builds tx, authorizes policy, signs, broadcasts raw tx, returns tx hash
+- Supports `WalletToken` for forwarded embedded-wallet bearer (multi-tenant shared engine)
 
 ### Chain management
 
@@ -140,8 +150,10 @@ func (e *Engine) ChainUse(req types.ChainUseRequest) types.Envelope[types.ChainL
 ```
 
 - `ChainList`: returns all presets + custom profiles, marks active
-- `ChainRegister`: adds custom chain to in-memory map (not persisted)
+- `ChainRegister`: adds custom chain to in-memory map (not persisted to disk)
 - `ChainUse`: sets active chain in registry, returns updated list
+
+Operator-defined chains from `tachyon.config.kvx` are registered at engine init.
 
 ### Registry lookups
 
@@ -150,7 +162,7 @@ func (e *Engine) ArtifactGet(req types.ArtifactGetRequest) types.Envelope[types.
 func (e *Engine) RegistryLookup(req types.RegistryLookupRequest) types.Envelope[types.RegistryLookupResponse]
 ```
 
-- `ArtifactGet`: fetches cached ABI/bytecode by contract name + project ID
+- `ArtifactGet`: fetches cached ABI/bytecode by contract name + project ID (defaults to current project)
 - `RegistryLookup`: resolves prior deployment by idempotency key + chain
 
 ---
@@ -169,6 +181,7 @@ func safeRel(p string) (string, bool)
 - `safeRel` rejects absolute paths, backslashes, and parent-directory escapes (`../`)
 - `maxSourceBytes = 8 << 20` (8 MiB) bounds individual file size
 - The dependency tree is linked via symlinks, not copied, so ephemeral workdirs are cheap
+- `sourcesProjectID` hashes sorted keys + contents (SHA-256, first 8 bytes) for a stable, content-addressed project id
 
 ---
 
@@ -176,9 +189,9 @@ func safeRel(p string) (string, bool)
 
 | What to change | Where |
 |---|---|
-| Add a new verb | `internal/engine/engine.go` — add method + type in `pkg/types/` |
-| Change envelope shape | `pkg/types/types.go` — `Envelope[T]` and `Error` |
-| Add error code | `pkg/types/errors.go` — add constant + update docs |
-| Change EVM default | `internal/engine/workdir.go` — `defaultEVMVersion` |
-| Add source upload limit | `internal/engine/workdir.go` — `maxSourceBytes` |
-| Change dependency linking | `internal/engine/workdir.go` — `prepareSourceWorkdir` symlink logic |
+| Add a new verb | `internal/engine/engine.go` - add method + type in `pkg/types/` |
+| Change envelope shape | `pkg/types/types.go` - `Envelope[T]` and `Error` |
+| Add error code | `pkg/types/errors.go` - add constant |
+| Change EVM default | `internal/engine/workdir.go` - `defaultEVMVersion` |
+| Add source upload limit | `internal/engine/workdir.go` - `maxSourceBytes` |
+| Change dependency linking | `internal/engine/workdir.go` - `prepareSourceWorkdir` symlink logic |

@@ -1,25 +1,27 @@
 ---
 title: "Control Loop"
-description: "Package matrix/neo/internal/agent implements Neo's recursive LLM tool-calling loop. The conversation transcript IS the state; the model emits text + tool-call intents; the harne..."
+description: "Package matrix/neo/internal/agent implements Neo's recursive LLM tool-calling loop with ErrIncomplete recovery, supervisor-driven respawns, capability surface rendering, and inbox draining."
 ---
 
-Package `matrix/neo/internal/agent` implements Neo's recursive LLM tool-calling loop. The conversation transcript IS the state; the model emits text + tool-call intents; the harness is the only effector. This is deliberately NOT the MCL compile→plan→execute machine — MCL is reached only through the `core_execute` tool for rigorous / monetary tasks.
+Package `matrix/neo/internal/agent` implements Neo's recursive LLM tool-calling loop. The conversation transcript IS the state; the model emits text + tool-call intents; the harness is the only effector. This is deliberately NOT the MCL compile, plan, execute machine. MCL is reached only through the `core_execute` tool for rigorous / monetary tasks.
 
-Source files: `neo/internal/agent/agent.go`, `neo/internal/agent/compaction.go`, `neo/internal/agent/prompt.go`, `neo/internal/agent/reporter.go`, `neo/internal/agent/validate.go`.
+Source files: `neo/internal/agent/agent.go`, `neo/internal/agent/compaction.go`, `neo/internal/agent/prompt.go`, `neo/internal/agent/reporter.go`, `neo/internal/agent/validate.go`, `neo/internal/agent/capability.go`.
 
 ---
 
 ## Design decisions
 
-**The transcript is the state.** There is no hidden state machine, no plan tree, no compiled intent. The model sees the full conversation (minus what was compacted) and decides what to do next. This is the "normal agent" shape — familiar, debuggable, and inspectable.
+**The transcript is the state.** There is no hidden state machine, no plan tree, no compiled intent. The model sees the full conversation (minus what was compacted) and decides what to do next. This is the "normal agent" shape, familiar, debuggable, and inspectable.
 
-**System block is re-derived every turn.** The system prompt (identity + rules + retrieved memory + budget stat) is rebuilt fresh on every iteration. It can never drift because it's never stored.
+**System block is re-derived every turn.** The system prompt (identity + rules + retrieved memory + budget stat + capability surface) is rebuilt fresh on every iteration. It can never drift because it is never stored.
 
-**Two-model architecture.** A main model (conversational, tool-calling) and a cheap model (compaction, validation, write-back). The cheap model falls back to the main model if unavailable.
+**Two-model architecture.** A main model (conversational, tool-calling) and a cheap model (compaction, validation, write-back). The cheap model falls back to the main model if unavailable. Background sub-agents use a dedicated `subMain` client with extended reasoning OFF to cut latency and token burn.
 
-**Context budget with hard/soft thresholds.** The window is monitored as a percentage of the configured context window. Soft threshold (80%) triggers cooperative compaction at a clean boundary. Hard threshold (92%) forces compaction immediately as a runaway backstop.
+**Context budget with hard/soft thresholds.** The window is monitored as a percentage of the configured context window. Soft threshold (default 80%) triggers cooperative compaction at a clean boundary. Hard threshold (default 92%) forces compaction immediately as a runaway backstop.
 
-**No-progress stall detection.** If the model repeats the same tool-call batch without making progress, the loop stops after `NoProgressStall` repeats and returns an honest partial.
+**No-progress stall detection.** If the model repeats the same tool-call batch without making progress, the loop stops after `NoProgressStall` repeats and returns an honest partial. Semantic stall detection (`SemanticStallSimilarityPct`) catches cosmetic rewords of the same failing call.
+
+**ErrIncomplete recovery.** When the loop stalls or exhausts its step budget, it returns `ErrIncomplete` rather than a fabricated success. The task supervisor treats this as "not done, keep going" and respawns a fresh agent over durable state.
 
 ---
 
@@ -27,42 +29,45 @@ Source files: `neo/internal/agent/agent.go`, `neo/internal/agent/compaction.go`,
 
 ```
 user message
-      │
-      ▼
-┌─────────────────┐
-│  faultMemory    │  Page-fault relevant cortex records (once/turn)
-│  faultPatterns  │  Retrieve proven procedural patterns
-│  recallTurns    │  Surface relevant past conversation turns
-└─────────────────┘
-      │
-      ▼
-┌─────────────────┐
-│  buildSystem    │  Compose system block: identity + rules + memory + budget stat
-└─────────────────┘
-      │
-      ▼
-┌─────────────────┐
-│  budget check   │  If >= hard_pct: compact NOW
-└─────────────────┘
-      │
-      ▼
-┌─────────────────┐
-│  call LLM       │  Send window (system + working transcript + tool schemas)
-└─────────────────┘
-      │
-      ▼
-┌─────────────────┐
-│  no tool calls? │  → Final answer (termination check + return)
-│  yes            │
-└─────────────────┘
-      │
-      ▼
-┌─────────────────┐
-│  no-progress?   │  → Stop with honest partial
-│  runToolCalls   │  Execute each tool call, append results to transcript
-└─────────────────┘
-      │
-      ▼
+      |
+      v
++-------------------+
+|  faultMemory      |  Page-fault relevant cortex records (once/turn)
+|  faultPatterns    |  Retrieve proven procedural patterns
+|  recallTurns      |  Surface relevant past conversation turns
+|  drainInbox       |  Pick up mid-task messages (F5) queued by the session
++-------------------+
+      |
+      v
++-------------------+
+|  buildSystem      |  Compose system block: identity + rules + capability
+|                   |  surface + memory + budget stat
++-------------------+
+      |
+      v
++-------------------+
+|  budget check     |  If >= hard_pct: compact NOW
++-------------------+
+      |
+      v
++-------------------+
+|  call LLM         |  Send window (system + working transcript + tool schemas)
++-------------------+
+      |
+      v
++-------------------+
+|  no tool calls?   |  -> Final answer (termination check + return)
+|  yes              |
++-------------------+
+      |
+      v
++-------------------+
+|  no-progress?     |  -> Stop with honest partial (ErrIncomplete)
+|  runToolCalls     |  Execute each tool call, append results to transcript
+|  drainInbox       |  Pick up any messages queued mid-dispatch
++-------------------+
+      |
+      v
       (loop back to buildSystem)
 ```
 
@@ -76,8 +81,8 @@ func (a *Agent) Chat(ctx context.Context, userInput string) error
 
 Runs one user turn through the recursive loop until:
 1. The model yields a final answer (no tool calls)
-2. The step budget is exhausted → honest partial
-3. The loop stalls (no progress) → honest partial
+2. The step budget is exhausted, returns `ErrIncomplete`
+3. The loop stalls (no progress), returns `ErrIncomplete`
 4. Context cancellation
 
 Conversation state (`working` transcript, `summary`, `activeGoal`) persists across calls.
@@ -93,6 +98,19 @@ if a.activeGoal == "" {
 
 The `activeGoal` is pinned every turn and used for memory retrieval routing.
 
+### Inbox draining
+
+The session can queue mid-task messages (F5) while the agent is running. The loop drains the inbox at each tool-call boundary and at turn end, appending any queued messages to the transcript so the agent picks them up on its next step instead of the message cancelling the run.
+
+```go
+// drainInbox returns and clears any queued mid-run messages (F5)
+if msgs := a.inbox(); len(msgs) > 0 {
+    for _, m := range msgs {
+        a.working = append(a.working, llm.UserMessage(m))
+    }
+}
+```
+
 ### Mid-turn refault
 
 Every `refaultEvery` (6) steps, the loop re-faults memory against the latest assistant narration to track sub-goal drift in long tool loops. The query is `userInput + lastAssistantText`.
@@ -100,9 +118,75 @@ Every `refaultEvery` (6) steps, the loop re-faults memory against the latest ass
 ### Termination
 
 When the model returns no tool calls:
-- `finish_reason=length` → nudge to retry compactly (never emit truncated text raw)
-- Empty answer + no tools → nudge once to continue
-- Otherwise → `Reporter.Say(answer)`, then background consolidation, then soft-compaction check
+- `finish_reason=length` then nudge to retry compactly (never emit truncated text raw)
+- Empty answer + no tools then nudge once to continue
+- Otherwise then `Reporter.Say(answer)`, then background consolidation, then soft-compaction check
+
+---
+
+## ErrIncomplete
+
+```go
+var ErrIncomplete = errors.New("neo: turn incomplete (task not finished)")
+```
+
+`ErrIncomplete` marks a turn that ended WITHOUT completing the task: the loop stalled (no progress) or exhausted its step budget. It is distinct from a model/transport error and from a genuine completion (nil). The task supervisor (`internal/server`) treats it as "not done, keep going": it respawns a fresh agent over durable state and continues, rather than surfacing a fake "Done" to the user. The wrapped text carries a short, honest where-I-got-stuck digest for the next attempt's catch-up.
+
+```go
+if errors.Is(err, agent.ErrIncomplete) {
+    // Task not finished. The supervisor will respawn.
+}
+```
+
+---
+
+## Supervisor pattern
+
+The HTTP service wraps every task in a persistent supervisor (`session.superviseTask`). The supervisor loop:
+
+```go
+func (s *session) superviseTask(ctx context.Context, r *run, objective string, resume bool) task.Status {
+    var lastErr error
+    for attempt := 1; ; attempt++ {
+        prompt := objective
+        if resume || attempt > 1 {
+            prompt = resumePrime(objective, attempt, lastErr)
+        }
+        err := s.agent.Chat(ctx, prompt)
+
+        switch superviseDecision(r.stopped.Load(), err, failClass, ctx.Err(), attempt, maxRespawns) {
+        case actInterrupted:
+            return task.StatusInterrupted
+        case actDone:
+            return task.StatusDone
+        case actStop:
+            return s.deliverDeterministicStop(r)
+        case actCeiling:
+            return s.deliverCeiling(r, "couldn't fully verify it was done")
+        }
+
+        // actRespawn: checkpoint, journal death, backoff, rebuild agent
+        s.engine.tasks.Checkpoint(s.id, r.id, attempt+1, friendlyErr(err))
+        s.recordLoopDeath(ctx, objective, attempt, err, failClass)
+        s.emitProgress(r, attempt, err)
+        lastErr = err
+        superviseBackoff(ctx, attempt, errors.Is(err, llm.ErrRateLimited))
+        s.rebuildAgent()
+    }
+}
+```
+
+The decision policy (`superviseDecision`) is a pure function of the attempt's error, failure class, context state, attempt number, and respawn budget:
+
+| Decision | Condition |
+|---|---|
+| `actDone` | `err == nil` (genuine completion) |
+| `actInterrupted` | User stopped the run |
+| `actStop` | Deterministic blocker (same failure would recur) |
+| `actCeiling` | Wall-clock blown or respawn budget exhausted |
+| `actRespawn` | Everything else: not done, try again |
+
+The task is decoupled from the HTTP request: it runs on `context.Background`, bounded only by `TaskMaxWall`. Closing the app or dropping the SSE stream never ends it. The durable task ledger (`task.Store`) survives restart and suspend.
 
 ---
 
@@ -114,9 +198,11 @@ When the context window fills, the agent swaps older working history into a cons
 func (a *Agent) compact(ctx context.Context, reason string)
 ```
 
-**"hard"** — forced compaction at the hard threshold. The agent announces: "I'm right at my working-memory limit — one moment while I consolidate..."
+**"hard"** - forced compaction at the hard threshold. The agent announces: "I'm right at my working-memory limit, one moment while I consolidate..."
 
-**"soft"** — cooperative compaction at a clean boundary. The agent announces: "We've covered a lot — let me quickly consolidate where we are..."
+**"soft"** - cooperative compaction at a clean boundary. The agent announces: "We've covered a lot, let me quickly consolidate where we are..."
+
+Before evicting older turns, the consolidator runs `ConsolidateSync` so durable facts/events/patterns reach cortex before the turns are lost.
 
 The cheap model (or main as fallback) reads the full transcript and fills the active-session schema:
 
@@ -129,9 +215,9 @@ LAST_RESULTS: <still-relevant tool outputs worth carrying forward>
 NEXT: <the planned next step(s)>
 ```
 
-After summarization, the `validateSummary` pass checks that every high-entropy token from the original transcript survived verbatim. Any dropped identifiers are re-appended under a `ARTIFACTS (preserved verbatim):` line — the trust contract (i3).
+After summarization, the `validateSummary` pass checks that every high-entropy token from the original transcript survived verbatim. Any dropped identifiers are re-appended under a `ARTIFACTS (preserved verbatim):` line, the trust contract (i3).
 
-If summarization fails, the loop degrades to `safeTail` — keeping the transcript from the last user message onward, so no tool-result is left without its preceding assistant call.
+If summarization fails, the loop degrades to `safeTail` - keeping the transcript from the last user message onward, so no tool-result is left without its preceding assistant call.
 
 ---
 
@@ -139,14 +225,38 @@ If summarization fails, the loop degrades to `safeTail` — keeping the transcri
 
 The system block is composed fresh every turn by `buildSystem`:
 
-1. **Static charter** — `systemPrompt()`: who Neo is, how it works, money rules, media rules, voice rules
-2. **Ground truth** — embedded `knowledge.md`: Paxeer is real and live, canonical endpoints, `core_execute` usage
-3. **Pinned block** — from `Pager.Pinned()`: identity DID, inviolable rules, hard constraints from cortex, user profile, active goal
-4. **Consolidated summary** — the active-session summary from compaction
-5. **Recalled turns** — relevant past conversation turns (deduped against live transcript)
-6. **Retrieved memory** — page-faulted cortex records (facts, events, patterns, preferences, goals)
-7. **Procedural patterns** — proven how-to recipes whose trigger matches the current goal
-8. **Budget stat** — `[context: 62% used]`
+1. **Static charter** - `systemPrompt()`: who Neo is, how it works, money rules, media rules, voice rules
+2. **Ground truth** - embedded `knowledge.md`: Paxeer is real and live, canonical endpoints, `core_execute` usage
+3. **Capability surface** - `renderCapabilitySurface()`: API/Is/IsNot facts, tool inventory, failure patterns from the self-model (byte-stable across steps)
+4. **Pinned block** - from `Pager.Pinned()`: identity DID, inviolable rules, hard constraints from cortex, user profile, active goal
+5. **Consolidated summary** - the active-session summary from compaction
+6. **Recalled turns** - relevant past conversation turns (deduped against live transcript)
+7. **Retrieved memory** - page-faulted cortex records (facts, events, patterns, preferences, goals)
+8. **Procedural patterns** - proven how-to recipes whose trigger matches the current goal
+9. **Skill index** - names-only list of proposed skills from the consolidator (token-bounded)
+10. **Budget stat** - `[context: 62% used]`
+
+---
+
+## Capability surface
+
+```go
+type CapabilitySurface struct {
+    API             []string  // external API surface (true routes/endpoints)
+    Is              []string  // architectural is-facts
+    IsNot           []string  // architectural is-not facts (contradictions are false)
+    FailurePatterns []string  // self-authored how-I-fail beliefs
+    StructuralSummary string  // compressed codegraph-derived summary
+}
+```
+
+Rendered resident in the byte-stable prefix so a false self-premise collides with the resident truth at the moment it would form. Missing sections render as explicit UNKNOWN with a pull path to `memory_recall "self:"`.
+
+```go
+func (a *Agent) renderCapabilitySurface() string
+```
+
+The tool inventory is derived at render time from the agent's own advertised schemas, so it can never disagree with what the agent can actually call.
 
 ---
 
@@ -157,11 +267,34 @@ func (a *Agent) runToolCalls(ctx context.Context, calls []llm.ToolCall)
 ```
 
 For each tool call:
-1. Parse arguments (JSON → map)
-2. `Reporter.Status("• " + name)` — ephemeral progress
-3. `dispatchWithRetry` — bounded retries (recovery ladder rung 1)
+1. Parse arguments (JSON to map)
+2. `Reporter.Status("- " + name)` - ephemeral progress
+3. `dispatchWithRetry` - bounded retries (recovery ladder rung 1)
 4. Append tool result to transcript
-5. `ToolObserver` callback — surfaces the work to the presentation layer
+5. `ToolObserver` callback, surfaces the work to the presentation layer
+
+When `ToolDispatchConcurrency > 0`, independent tool calls in one turn dispatch concurrently (up to the configured limit). Results are always assembled in call order.
+
+### ToolObserver and ToolEvent
+
+```go
+type ToolObserver func(ToolEvent)
+
+type ToolEvent struct {
+    ID            string
+    Name          string
+    Args          map[string]interface{}
+    Result        string
+    IsErr         bool
+    Phase         ToolPhase  // "start", "end", or "stream"
+    ScreenshotURL string     // out-of-band /media URL for browser filmstrip
+    StreamPath    string     // live file-typing: target file
+    StreamDelta   string     // live file-typing: content fragment
+    StreamOffset  int        // live file-typing: byte offset
+}
+```
+
+The `ToolStream` phase fires BEFORE `ToolStart` while the model is still generating a `write_file` call, streaming decoded content fragments so an open editor renders Neo typing.
 
 ### Recovery ladder
 
@@ -172,7 +305,27 @@ For each tool call:
 | 3 | Escalate to MCL | Money/rigor boundary |
 | 4 | Surface honest partial | After ladder exhaustion or stall |
 
-`MaxRetriesPerTool` (default 3) bounds rung 1. `MaxAdaptAttempts` (default 2) bounds rung 2.
+`MaxRetriesPerTool` (default 3) bounds rung 1. `MaxAdaptAttempts` (default 2) bounds rung 2. `MaxGuidanceNudges` caps consecutive system-guidance nudges before escalating to an honest stop-and-ask.
+
+---
+
+## Sub-agent persona
+
+When constructed with `Options.Persona`, the agent runs as a headless sub-agent:
+
+```go
+sub := agent.New(agent.Options{
+    Config:    cfg,
+    Main:      subMain,  // thinking OFF
+    Cheap:     e.cheap,
+    Tools:     e.tools,
+    Pager:     e.pager,  // shared cortex READ lane; no consolidator
+    Persona:   spec.Persona,
+    SelfModel: selfModel, // inherited structural summary + failure patterns
+})
+```
+
+Sub-agents get a restricted tool surface (full Natural, no `core_execute`, no `memory_recall`, no `spawn_subagents`), never ask the user questions, and end by reporting findings back to the orchestrating agent via the `captureReporter`.
 
 ---
 
@@ -189,8 +342,9 @@ type Reporter interface {
 ```
 
 Implementations:
-- **CLI** (`stdoutReporter`): Say → stdout, Status/Notice → stderr
+- **CLI** (`stdoutReporter`): Say to stdout, Status/Notice to stderr
 - **Server** (`sseReporter`): All three map to SSE event types
+- **Capture** (`captureReporter`): Used by sub-agents to capture the final answer for the swarm digest
 
 ---
 
@@ -205,7 +359,7 @@ used = EstimateTokens(system) + estimateMessagesTokens(working) + schemaTokens
 pct  = used * 100 / ContextWindowTokens
 ```
 
-`schemaTokens` is the JSON-serialized tool schema size — a fixed overhead paid every turn. `estimateMessagesTokens` counts content + tool calls + 4 tokens per message overhead.
+`schemaTokens` is the JSON-serialized tool schema size, a fixed overhead paid every turn. `estimateMessagesTokens` counts content + tool calls + 4 tokens per message overhead.
 
 ---
 
@@ -225,11 +379,15 @@ To change loop behavior, edit the relevant source:
 
 | What to change | Where |
 |---|---|
-| System prompt text | `agent/prompt.go` — `systemPrompt()` |
-| Inviolable rules | `agent/prompt.go` — `invariantRules` |
+| System prompt text | `agent/prompt.go` - `systemPrompt()` |
+| Inviolable rules | `agent/prompt.go` - `invariantRules` |
 | Ground truth facts | `agent/knowledge.md` (embedded, ships in binary) |
-| Compaction schema | `agent/compaction.go` — `compactionSystemPrompt` |
-| Context thresholds | `config/config.go` — `SoftPct`, `HardPct` |
-| Step budget | `config/config.go` — `StepBudget` |
-| No-progress stall count | `config/config.go` — `NoProgressStall` |
-| Recovery ladder bounds | `config/config.go` — `MaxRetriesPerTool`, `MaxAdaptAttempts` |
+| Capability surface | `agent/capability.go` - `renderCapabilitySurface()` |
+| Compaction schema | `agent/compaction.go` - `compactionSystemPrompt` |
+| Context thresholds | `config/config.go` - `SoftPct`, `HardPct` |
+| Step budget | `config/config.go` - `StepBudget`, `StepBudgetMin`, `StepBudgetMax` |
+| No-progress stall count | `config/config.go` - `NoProgressStall` |
+| Semantic stall detection | `config/config.go` - `SemanticStallSimilarityPct` |
+| Recovery ladder bounds | `config/config.go` - `MaxRetriesPerTool`, `MaxAdaptAttempts` |
+| Guidance nudge cap | `config/config.go` - `MaxGuidanceNudges` |
+| Supervisor respawns | `config/config.go` - `TaskMaxRespawns`, `SuperviseTasks` |

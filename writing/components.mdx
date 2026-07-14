@@ -1,44 +1,56 @@
 ---
-title: Components
-description: "Choose the right component for the job — when to use Cards, Callouts, Tabs, Steps, and more. Live examples for every component live in the Components tab."
+title: Using Components
+description: "Choose the right MDX component for the job: when to use Cards, Callouts, Tabs, Steps, CodeGroups, and API documentation components."
 ---
 
-Jamdesk's MDX components are available in every page — no imports needed. This guide helps you pick the right one. For live examples of every component, see the **Components** tab in the sidebar.
+MDX components are available in every page without imports. This guide helps you pick the right one for each situation. For live examples of every component, see the **Components** section in the sidebar.
 
 ## Highlighting information
 
+Use callout components to draw attention to important content:
+
 <Note>
-**Note** — Helpful context that enhances understanding.
+**Note** -- Helpful context that enhances understanding but is not required reading.
 </Note>
 
 <Info>
-**Info** — Neutral facts or supplementary details.
+**Info** -- Neutral facts or supplementary details worth highlighting.
 </Info>
 
 <Tip>
-**Tip** — Best practices and "pro tips."
+**Tip** -- Best practices, shortcuts, and recommendations.
 </Tip>
 
 <Warning>
-**Warning** — Important caveats or requirements.
+**Warning** -- Important caveats, requirements, or common pitfalls.
 </Warning>
 
 <Danger>
-**Danger** — Critical warnings (data loss, security).
+**Danger** -- Critical warnings about data loss, security, or irreversible actions.
 </Danger>
 
 <Check>
-**Check** — Success confirmations.
+**Check** -- Success confirmations or completed steps.
 </Check>
 
-Use the lightest one that conveys the urgency. Reach for `Warning` and `Danger` sparingly so they keep their weight.
+Use the lightest callout that conveys the urgency. If everything is a warning, nothing is.
+
+```mdx
+<Note>
+Helpful context or supplementary information.
+</Note>
+
+<Warning>
+Important caveats or requirements.
+</Warning>
+```
 
 ## Linking to other pages
 
 | Component | When to use |
-|-----------|-------------|
-| `<Card>` | A single feature or destination — title, icon, optional href. |
-| `<Columns>` | A grid of cards (2, 3, or 4 columns). Wraps multiple `<Card>` children. |
+| --- | --- |
+| `Card` | A single feature or destination with a title, icon, and optional link. |
+| `Columns` | A responsive grid of cards (2, 3, or 4 columns). Wraps multiple `Card` children. |
 
 ```mdx
 <Columns cols={2}>
@@ -54,25 +66,46 @@ Use the lightest one that conveys the urgency. Reach for `Warning` and `Danger` 
 ## Showing alternatives or steps
 
 | Component | When to use |
-|-----------|-------------|
-| `<Tabs>` + `<Tab>` | Equal alternatives the reader chooses between (languages, platforms, OSes). |
-| `<AccordionGroup>` + `<Accordion>` | Collapsed-by-default details (FAQs, advanced options). |
-| `<Steps>` + `<Step>` | A linear sequence the reader walks through in order. |
-| `<CodeGroup>` | Multi-language code blocks side by side with shared tab strip. |
+| --- | --- |
+| `Tabs` + `Tab` | Equal alternatives the reader chooses between (languages, platforms, OSes). |
+| `AccordionGroup` + `Accordion` | Collapsed-by-default details (FAQs, advanced options, troubleshooting). |
+| `Steps` + `Step` | A linear sequence the reader walks through in order. |
+| `CodeGroup` | Multi-language code blocks side by side with a shared tab strip. |
 
-If readers do all the work, use `<Steps>`. If they pick one path, use `<Tabs>`. If most readers skip it, use `<AccordionGroup>`.
+The decision is straightforward:
+
+- If readers do all the work, use `Steps`.
+- If they pick one path, use `Tabs`.
+- If most readers skip it, use `AccordionGroup`.
+
+```mdx
+<Steps>
+  <Step title="First">Do this first.</Step>
+  <Step title="Second">Then do this.</Step>
+</Steps>
+```
 
 ## Documenting APIs
 
 | Component | When to use |
-|-----------|-------------|
-| `<ParamField>` | A request parameter (path, query, header, body). |
-| `<ResponseField>` | A response field. |
-| `<RequestExample>` | The request code samples panel. |
-| `<ResponseExample>` | The response payload(s) panel. |
+| --- | --- |
+| `ParamField` | A request parameter (path, query, header, body). |
+| `ResponseField` | A response field in the return payload. |
+| `RequestExample` | The request code samples panel. |
+| `ResponseExample` | The response payload panel. |
 
-See the **API Pages** group for working examples.
+These components are designed for API reference pages. They render type badges, required indicators, and structured parameter lists.
+
+## Code blocks
+
+| Component | When to use |
+| --- | --- |
+| Fenced code block | A single code example with syntax highlighting. |
+| Code block with title | A code example labeled with its filename. |
+| `CodeGroup` | The same example in multiple languages, shown as tabs. |
+
+See [Code Blocks](/writing/code-blocks) for syntax and examples.
 
 <Tip>
-For the full component reference (every prop, every variant) see [jamdesk.com/docs/components/overview](https://jamdesk.com/docs/components/overview).
+For the full component reference with every prop and variant, see the individual pages in the **Components** section of the sidebar.
 </Tip>

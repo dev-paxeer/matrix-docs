@@ -1,11 +1,11 @@
 ---
 title: "Replay"
-description: "Package matrix/cortex/replay implements the cortex replay invariant: drop every derived index and rebuild it deterministically from the canonical journal. cortex.Rebuild is the..."
+description: "Package matrix/cortex/replay implements the cortex replay invariant: drop every derived index and rebuild deterministically from the canonical journal."
 ---
 
-Package `matrix/cortex/replay` implements the cortex replay invariant: drop every derived index and rebuild it deterministically from the canonical journal. `cortex.Rebuild` is the caller-facing surface. The invariant is: drop indexes → walk journal → roots match.
+Package `matrix/cortex/replay` implements the cortex replay invariant: drop every derived index and rebuild it deterministically from the canonical journal. `cortex.Rebuild` is the caller-facing surface. The invariant is: drop indexes, walk journal, roots match.
 
-Source files: `cortex/replay/replay.go`, `cortex/replay/drop.go`, `cortex/rebuild.go`.
+Source files: `cortex/replay/replay.go`, `cortex/replay/rebuild.go`, `cortex/replay/drop.go`, `cortex/rebuild.go`.
 
 ---
 
@@ -14,19 +14,21 @@ Source files: `cortex/replay/replay.go`, `cortex/replay/drop.go`, `cortex/rebuil
 **Canonical vs derived is the fundamental split.** Everything in `store/` is canonical (kept across drop+rebuild). Everything in `indexes/` is derived (dropped then re-emitted from the canonical state).
 
 ```
-CANONICAL — never touched by Rebuild:
-  m/       mv/      e/      j/      tomb/    snap/    chk/
+CANONICAL, never touched by Rebuild:
+  m/       mv/      e/      j/      snap/    chk/
   meta/journal_head    meta/snapshot_seq
 
-DERIVED — dropped then rebuilt:
+DERIVED, dropped then rebuilt:
   vec/     idx/     salience/    accum/
   meta/embed_cursor    meta/embed_vertex_next    meta/embed_model
-  meta/salience_weights    (also a sidecar — rebuilt from KindLearnWeights)
+  meta/salience_weights    (rebuilt from KindLearnWeights journal entries)
 ```
 
-**Vec/* is NOT rebuilt by replay.** Re-embedding lives behind the `Embedder` boundary. After `Rebuild`, `Head.EmbeddingRef` bytes are preserved in `m/<id>` (canonical) and the memories SMT root is identical. The HNSW graph file must be rebuilt by the next `StartEmbedder` call — its `loadOrBuildIndex` fallback scans `vec/meta` (which is empty post-Rebuild) and re-processes the journal from seq=0.
+**Vec/* is NOT rebuilt by replay.** Re-embedding lives behind the `Embedder` boundary. After `Rebuild`, `Head.EmbeddingRef` bytes are preserved in `m/<id>` (canonical) and the memories SMT root is identical. The HNSW graph file must be rebuilt by the next `StartEmbedder` call, its `loadOrBuildIndex` fallback scans `vec/meta` (which is empty post-Rebuild) and re-processes the journal from seq=0.
 
-**Salience values depend on wall clock.** `salience.Cached` uses a recency-decay component. Different rebuild clocks produce different caches and identical `OverallRoot`s — by design. The `OverallRoot` is not salience-dependent.
+**Salience values depend on wall clock.** `salience.Cached` uses a recency-decay component. Different rebuild clocks produce different caches and identical `OverallRoot`s, by design. The `OverallRoot` is not salience-dependent.
+
+**Rebuild is idempotent.** Running twice produces the same output. If Rebuild crashes mid-cycle, the next call starts from scratch with a clean slate. Between crash and re-run, `OverallRoot()` returns a root over partially-rebuilt state, which compares unequal to any prior snapshot, the correct "dirty state" signal.
 
 ---
 
@@ -44,18 +46,19 @@ Pre-conditions:
 
 Post-conditions:
 - `c.OverallRoot()` equals the pre-drop root (assuming no new writes happened).
-- `vec/*` is empty — start the embedder to re-embed.
+- `vec/*` is empty, start the embedder to re-embed.
 
-### RebuildResult
+### Result
 
 ```go
-type RebuildResult struct {
+type Result struct {
     JournalSeq            uint64   // journal head at rebuild time
     MemoriesScanned       uint64   // m/<id> heads re-emitted into idx/ + SMT
     EdgesScanned          uint64   // e/from/* records re-emitted into SMT
     JournalLeavesAppended uint64   // j/<seq> entries staged onto MMR
-    PreDropRoot           [32]byte // OverallRoot captured before drop
-    PostRebuildRoot       [32]byte // OverallRoot after rebuild
+    SalienceBumpsApplied  uint64   // (j/<seq>, memoryID) pairs re-applied
+    PreOverallRoot        [32]byte // OverallRoot captured before drop
+    PostOverallRoot       [32]byte // OverallRoot after rebuild
 }
 ```
 
@@ -63,9 +66,11 @@ type RebuildResult struct {
 
 ```go
 // Strongest check: pre-drop root == post-rebuild root (no snapshot needed)
-if result.PreDropRoot != result.PostRebuildRoot {
+if result.PreOverallRoot != result.PostOverallRoot {
     log.Fatal("replay invariant violated")
 }
+// Or use the helper:
+err = replay.VerifyPreservesRoot(result)
 
 // Spec §13.4 literal: verify against a specific snapshot manifest
 manifest, _ := c.Snapshot("pre-rebuild")
@@ -77,18 +82,40 @@ err = replay.VerifyAgainstSnapshot(result, manifest)
 
 ## Drop
 
-`replay.DropDerived(s)` deletes every key under spec's `indexes/` namespace. Uses Pebble's `DeleteRange` for prefix-scoped wipes — O(1) on the LSM level (a single range tombstone), not O(N) point deletes.
+`replay.DropDerived(s)` deletes every key under spec's `indexes/` namespace. Uses Pebble's `DeleteRange` for prefix-scoped wipes, O(1) on the LSM level (a single range tombstone), not O(N) point deletes.
 
 ```go
 err := replay.DropDerived(s)
 ```
 
-Idempotent — running twice is safe.
+Idempotent, running twice is safe.
 
 ```go
 // Audit: count how many derived keys remain
 n, err := replay.CountDerived(s)
 ```
+
+### Derived prefix list
+
+| Prefix | Spec citation |
+|---|---|
+| `accum/` | MMR persistence (sess#7 phase7_locked_design Q2) |
+| `idx/type/` | Predicate index (research/04-cortex.md §2.3) |
+| `idx/tag/` | Predicate index (research/04-cortex.md §2.3) |
+| `idx/frame/` | Frame-relevance index (Phase 8) |
+| `idx/actor_obj/` | Outcomes index (Phase 8) |
+| `idx/smt/` | SMT node cache (sess#7 phase7_locked_design Q3) |
+| `salience/` | Salience cache (research/04-cortex.md §8) |
+| `vec/` | Vector index (research/04-cortex.md §13.1) |
+
+### Derived single-key meta markers
+
+| Key | Purpose |
+|---|---|
+| `meta/embed_cursor` | Embedder journal cursor |
+| `meta/embed_vertex_next` | Next HNSW vertex ID |
+| `meta/embed_model` | Last embedding model string |
+| `meta/salience_weights` | Per-actor learned EMA weights |
 
 ---
 
@@ -97,37 +124,44 @@ n, err := replay.CountDerived(s)
 `replay.Rebuild(s, snap, opts)` runs these phases in order:
 
 ```
-1. Capture PreDropRoot = s.OverallRoot()
+1. Capture PreOverallRoot = snap.CurrentRoots()
 
-2. DropDerived(s)  — all derived prefixes + sidecar meta keys
+2. DropDerived(s)  - all derived prefixes + sidecar meta keys
 
 3. Rebuild memories:
    - Scan m/<id> for every Head
+   - Load mv/<id>/v/1 to recover original CreatedAt (for idx/* key timestamps)
    - Re-emit idx/type/<t>/<ts>/<id>, idx/tag/<h>/<ts>/<id>,
      idx/frame/<…>/<id>, idx/actor_obj/<…>/<id> (from Head fields)
-   - Re-emit salience/<id> (from Head.DeclaredImportance + now)
-   - Stage memories SMT update (StageMemoryUpdate)
+   - Re-emit salience/<id> (fresh cold score from Head.DeclaredImportance + now)
+   - Stage memories SMT update (StageMemoryUpdate with canonical Head bytes)
+   - Commit one Pebble batch per memory
 
 4. Rebuild edges:
    - Scan e/from/<src>/<t>/<dst> for every EdgeRecord
    - Stage edges SMT update (StageEdgeUpdate)
+   - Commit one Pebble batch per edge
 
-5. Rebuild journal MMR:
+5. Rebuild salience bumps from journal:
+   - Walk j/<seq> for KindFind (LateBinding) + KindAttest + KindLearnWeights entries
+   - Re-apply BumpForAccess / BumpForCitation / DecrementCitation in journal order
+   - Re-apply EMA weight updates from KindLearnWeights onto meta/salience_weights
+   - Tombstoned-at-replay-time memories are silently skipped
+
+6. Rebuild journal MMR:
    - Walk j/<seq> from 0 to head
-   - Re-stage each leaf into the MMR accumulator
-   - Walk KindLearnWeights entries → re-apply EMA steps → rebuild meta/salience_weights
+   - Compute LeafHash of the persisted CBOR bytes
+   - Stage each leaf into the MMR accumulator
+   - Commit one batch per leaf (SMT/MMR correctness requires per-step commits)
 
-6. Capture PostRebuildRoot = s.OverallRoot()
+7. Capture PostOverallRoot = snap.CurrentRoots()
 ```
 
-Each phase commits its own individual Pebble batches. Rebuild is NOT atomic across drop+rebuild as a unit. If Rebuild crashes mid-cycle:
-- Drop is idempotent — the next Rebuild call starts from scratch with a clean slate.
-- Rebuild is also idempotent — re-running produces the same output.
-- Between crash and re-run, `OverallRoot()` returns a root over partially-rebuilt state, which compares unequal to any prior snapshot — the correct "dirty state" signal.
+Each rebuild phase commits its own individual Pebble batches. Rebuild is NOT atomic across drop+rebuild as a unit.
 
 ---
 
-## Derived vs canonical — the authoritative list
+## Derived vs canonical, the authoritative list
 
 ### Kept (canonical)
 
@@ -137,29 +171,27 @@ Each phase commits its own individual Pebble batches. Rebuild is NOT atomic acro
 | `mv/` | MemoryVersion records |
 | `e/from/` + `e/to/` | EdgeRecord records |
 | `j/` | Journal entries |
-| `tomb/` | Tombstone markers |
 | `snap/` | SnapshotManifest records |
 | `chk/` | Compact checkpoint records |
 | `meta/journal_head` | Next journal seq |
+| `meta/snapshot_seq` | Next snapshot seq |
 
 ### Dropped and re-derived
 
 | Key prefix | Re-derived from |
 |---|---|
-| `idx/type/` | m/&lt;id> Head.Type |
-| `idx/tag/` | m/&lt;id> Head.Tags |
-| `idx/frame/` | m/&lt;id> Head.Frames |
-| `idx/actor_obj/` | m/&lt;id> Head.Frames (TypeEvent only) |
-| `idx/smt/` | m/&lt;id> + e/from/* canonical bytes |
-| `salience/` | m/&lt;id> Head.DeclaredImportance + now |
-| `accum/` | j/&lt;seq> leaf hashes |
-| `vec/` | NOT rebuilt by replay — requires embedder re-run |
+| `idx/type/` | `m/<id>` Head.Type + mv/<id>/v/1 CreatedAt |
+| `idx/tag/` | `m/<id>` Head.Tags + mv/<id>/v/1 CreatedAt |
+| `idx/frame/` | `m/<id>` Head.Frames |
+| `idx/actor_obj/` | `m/<id>` Head.Frames (TypeEvent only) |
+| `idx/smt/` | `m/<id>` + `e/from/*` canonical bytes |
+| `salience/` | `m/<id>` Head.DeclaredImportance + now + journal salience bumps |
+| `accum/` | `j/<seq>` leaf hashes |
+| `vec/` | NOT rebuilt by replay, requires embedder re-run |
 | `meta/embed_cursor` | Reset to 0 (embedder re-processes from start) |
 | `meta/embed_vertex_next` | Reset (embedder re-allocates) |
 | `meta/embed_model` | Reset (triggers model-change rewind on next StartEmbedder) |
 | `meta/salience_weights` | Re-applied from KindLearnWeights journal entries |
-| `meta/goal_state/*` | NOT rebuilt — scheduler re-derives on next tick |
-| `meta/compile_cache/*` | NOT rebuilt — compile cache is keyed to snapshot hashes |
 
 ---
 
@@ -167,7 +199,8 @@ Each phase commits its own individual Pebble batches. Rebuild is NOT atomic acro
 
 | What to change | Where |
 |---|---|
-| Add a new derived namespace | `replay/drop.go` — `derivedPrefixes`; `replay/rebuild.go` — re-derive in the appropriate rebuild phase |
+| Add a new derived namespace | `replay/drop.go` - `derivedPrefixes`; `replay/rebuild.go` - re-derive in the appropriate rebuild phase |
 | Add a new canonical namespace | Document it; ensure it is NOT in `derivedPrefixes` and NOT dropped |
-| Add a new journal kind that affects derived state | `replay/rebuild.go` — handle in the journal walk (step 5) |
-| Change the rebuild verification surface | `replay/replay.go` — `VerifyPreservesRoot` / `VerifyAgainstSnapshot` |
+| Add a new journal kind that affects derived state | `replay/rebuild.go` - handle in the journal walk (step 5) |
+| Change the rebuild verification surface | `replay/replay.go` - `VerifyPreservesRoot` / `VerifyAgainstSnapshot` |
+| Add new single-key derived meta markers | `replay/drop.go` - `derivedSingleMetaKeys` |

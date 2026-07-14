@@ -1,6 +1,6 @@
 ---
 title: "LLM Client"
-description: "Package matrix/neo/internal/llm is Neo's OpenAI-compatible function-calling transport. It reuses matrix/mcl/llm's Config, provider detection, and model registry for gateway mete..."
+description: "Package matrix/neo/internal/llm is Neo's OpenAI-compatible function-calling transport with gateway metering, reasoning channel extraction, typed sentinel errors, and parallel tool dispatch."
 ---
 
 Package `matrix/neo/internal/llm` is Neo's OpenAI-compatible function-calling transport. It reuses `matrix/mcl/llm`'s Config, provider detection, and model registry for gateway metering and provider routing, but owns its own tool-calling message shape.
@@ -11,13 +11,15 @@ Source files: `neo/internal/llm/client.go`, `neo/internal/llm/message.go`.
 
 ## Design decisions
 
-**Chat-completions shape only.** v1 supports the OpenAI chat-completions API with native `tools`/`tool_calls`/`tool` role. Anthropic Messages and OpenAI Responses shapes are rejected with a clear error — their tool schemas differ and would break the loop.
+**Chat-completions shape only.** v1 supports the OpenAI chat-completions API with native `tools`/`tool_calls`/`tool` role. Anthropic Messages and OpenAI Responses shapes are rejected with a clear error; their tool schemas differ and would break the loop.
 
 **Gateway metering path.** When `Config.GatewayURL` is set, calls are rewritten to `${GatewayURL}/v1/chat/completions` with `MATRIX_GATEWAY_TOKEN` bearer and `X-Matrix-*` metadata headers. Spend is attributed to the actor under slot "neo".
 
-**Reasoning channel extraction.** Some providers inline chain-of-thought inside `content` as `…` or `<thinking>…</thinking>`. `splitInlineThink` moves this out of the visible channel and into the `Reasoning` field, so internal monologue never leaks into the chat.
+**Reasoning channel extraction.** Some providers inline chain-of-thought inside `content` as `<think>...</think>` or `<thinking>...</thinking>`. `splitInlineThink` moves this out of the visible channel and into the `Reasoning` field, so internal monologue never leaks into the chat.
 
-**Dry-run support.** Any code that constructs an `interpreter.Interpreter` with `llm=nil` runs in dry-run mode — prompts are built and interpolated but no LLM call is made.
+**Typed sentinel errors.** `ErrRequestTooLarge` (HTTP 413, recoverable by compaction), `ErrProviderRejected` (4xx validation, non-retryable), and `ErrRateLimited` (429, retryable with hard backoff) let callers make precise recovery decisions.
+
+**Sub-agent model variant.** Background sub-agents use a dedicated client (`subMain`) with extended reasoning OFF to cut latency and token burn. Only the user-facing Neo loop and the core MCL pipeline think.
 
 ---
 
@@ -25,17 +27,18 @@ Source files: `neo/internal/llm/client.go`, `neo/internal/llm/message.go`.
 
 ```go
 type Client struct {
-    model       string
-    provider    mcllm.Provider
-    endpoint    string
-    apiKey      string
-    gatewayURL  string
-    actorDID    string
-    intentID    string
-    slotLabel   string
-    temperature float64
-    maxTokens   int
-    seed        int64
+    model           string
+    provider        mcllm.Provider
+    endpoint        string
+    apiKey          string
+    gatewayURL      string
+    gatewayTokenEnv string
+    actorDID        string
+    intentID        string
+    slotLabel       string
+    temperature     float64
+    maxTokens       int
+    seed            int64
 }
 ```
 
@@ -78,7 +81,7 @@ type ChatResult struct {
 }
 ```
 
-`FinishReason` values: `"stop"`, `"length"` (truncated), `"tool_calls"`. Truncated generation is handled by the agent loop — never emitted raw.
+`FinishReason` values: `"stop"`, `"length"` (truncated), `"tool_calls"`. Truncated generation is handled by the agent loop, never emitted raw.
 
 ---
 
@@ -154,9 +157,9 @@ tool := llm.NewFunctionTool("fs__read_file", "Read a file", map[string]interface
 
 `fromWireRespMessage` handles three provider postures:
 
-1. **Separate `reasoning_content` field** — copied directly to `Message.Reasoning`
-2. **Inline `…` or `<thinking>…</thinking>` in `content`** — extracted by `splitInlineThink`
-3. **Unterminated opening tag** — the whole remainder is reasoning (truncated generation safety)
+1. **Separate `reasoning_content` field** - copied directly to `Message.Reasoning`
+2. **Inline `<think>...</think>` or `<thinking>...</thinking>` in `content`** - extracted by `splitInlineThink`
+3. **Unterminated opening tag** - the whole remainder is reasoning (truncated generation safety)
 
 The `Reasoning` field is never serialized onto the wire and never treated as the answer. It is surfaced as a distinct channel only.
 
@@ -179,6 +182,21 @@ This matches the daemon/router environment key `MATRIX_GATEWAY_URL` and the MCL 
 
 ## Error handling
 
+### Sentinel errors
+
+```go
+var ErrRequestTooLarge = errors.New("neo/llm: request body too large")       // HTTP 413, recoverable
+var ErrProviderRejected = errors.New("neo/llm: provider rejected request (non-retryable)") // 4xx validation
+var ErrRateLimited      = errors.New("neo/llm: provider rate limited (429)")  // retryable with backoff
+```
+
+Callers detect with `errors.Is()`:
+- `ErrRequestTooLarge`: the agent can compact the window and retry
+- `ErrProviderRejected`: stop the retry ladder immediately (the request shape is bad)
+- `ErrRateLimited`: back off hard; the task supervisor reads this to lengthen its respawn backoff
+
+### HTTP errors
+
 HTTP errors are parsed for structured error bodies:
 
 ```
@@ -193,8 +211,9 @@ Empty choices, parse failures, and API errors all return wrapped errors with the
 
 | What to change | Where |
 |---|---|
-| Supported API shapes | `llm/client.go` — `New()` shape guard |
-| Gateway header set | `llm/client.go` — `newHTTPRequest()` |
-| Inline reasoning tags | `llm/client.go` — `splitInlineThink()` |
-| Message constructors | `llm/message.go` — `SystemMessage`, `UserMessage`, etc. |
-| Tool schema defaults | `llm/message.go` — `NewFunctionTool()` |
+| Supported API shapes | `llm/client.go` - `New()` shape guard |
+| Gateway header set | `llm/client.go` - `newHTTPRequest()` |
+| Inline reasoning tags | `llm/client.go` - `splitInlineThink()` |
+| Message constructors | `llm/message.go` - `SystemMessage`, `UserMessage`, etc. |
+| Tool schema defaults | `llm/message.go` - `NewFunctionTool()` |
+| Error sentinel behavior | `llm/client.go` - error detection + wrapping |

@@ -1,87 +1,38 @@
 ---
 title: "Chains"
-description: "The chain manager loads preset chain profiles from a JSON file and maintains a map of custom chains registered at runtime. It resolves chain references by profile ID, numeric ch..."
+description: "The chain profile manager loads presets from JSON, supports custom registration, resolves chains by id or numeric chain-id, and manages the active chain selection."
 ---
 
 **Source file:** `internal/chains/chains.go`
 
-The chain manager loads preset chain profiles from a JSON file and maintains a map of custom chains registered at runtime. It resolves chain references by profile ID, numeric chain ID, or inline RPC URL.
+The chain profile manager loads presets from a JSON file, supports custom chain registration at runtime, and resolves chains by id or numeric chain-id. It manages the active chain selection for the daemon.
 
 ---
 
 ## Design decisions
 
-### Presets + custom registration
+### Preset + custom model
 
-Chain profiles are loaded from `chains/presets.json` at startup. Operators can add custom chains via the API (`chain.register`) or config (`tachyon.config.kvx` `[chains.*]` sections). Custom chains are stored in-memory only (not persisted to disk).
+Chains come from two sources:
+
+- **Presets:** Loaded from `chains/presets.json` at startup. Each preset may reference an environment variable for its RPC URL (`rpc_url_env`), resolved lazily on access.
+- **Custom:** Registered at runtime via `ChainRegister`. Stored in memory only (not persisted to disk).
 
 ### Numeric chain-id fallback
 
-Callers often pass the numeric EVM chain ID (`"125"`) rather than the profile ID (`"paxeer-mainnet"`). The manager maps numeric IDs to profiles:
+Callers (and agents) commonly pass the numeric EVM chain-id (e.g., `"125"`) rather than the profile id (e.g., `"paxeer-mainnet"`). The `Get` method maps numeric input to the matching profile by iterating presets and custom chains, so deploy/call/simulate resolve either way.
 
-```go
-if n, err := strconv.ParseUint(id, 10, 64); err == nil && n != 0 {
-    for _, p := range m.presets {
-        if p.ChainID == n { return p, true }
-    }
-}
-```
+### Inline RPC resolution
 
-This dual lookup makes the API more ergonomic for agents that know the chain number but not the profile name.
+The `Resolve` method accepts three sources: `chainID`, `rpcURL`, and `activeID`. When `rpcURL` is provided directly, it returns an anonymous inline chain profile without requiring registration. This supports ad-hoc chain targeting.
 
-### Environment-variable RPC URLs
+### Thread safety
 
-Presets can specify `rpc_url_env` instead of `rpc_url`. The manager resolves the env var at lookup time:
-
-```json
-{
-  "id": "paxeer-mainnet",
-  "rpc_url_env": "PAXEER_RPC_URL",
-  "chain_id": 125
-}
-```
-
-This keeps secrets out of the presets file and lets operators set RPC URLs via environment.
-
-### Inline RPC override
-
-Any verb that takes `rpc_url` directly (simulate, call, deploy) can bypass the chain manager entirely. The `Resolve` method returns an inline profile when `rpc_url` is set:
-
-```go
-if rpcURL != "" {
-    return types.ChainProfile{ID: "inline", Name: "inline", RPCURL: rpcURL, ChainID: 0}, nil
-}
-```
-
-This is useful for one-off calls to arbitrary RPCs without registering a chain profile.
-
-### Active chain tracking
-
-The active chain ID is stored in the registry (not the chain manager). The engine calls `Reg.SetActiveChain` on `chain.use` and reads `Reg.ActiveChainID` as the default for chain-facing verbs.
+All reads acquire `RLock`, all writes acquire `Lock`. The `resolveEnv` helper lazily resolves `rpc_url_env` references on each access.
 
 ---
 
-## Preset file format
-
-```json
-{
-  "chains": [
-    {
-      "id": "paxeer-mainnet",
-      "name": "Paxeer Mainnet",
-      "rpc_url_env": "PAXEER_RPC_URL",
-      "chain_id": 125,
-      "preset": "paxeer",
-      "explorer": "https://paxscan.paxeer.app",
-      "features": ["debug_trace"]
-    }
-  ]
-}
-```
-
----
-
-## Chain profile type
+## ChainProfile
 
 ```go
 type ChainProfile struct {
@@ -97,13 +48,37 @@ type ChainProfile struct {
 }
 ```
 
+Custom chains are registered with `Features: []string{"debug_trace"}` by default.
+
 ---
 
-## Modifying the chains manager
+## Operations
+
+| Method | Description |
+|---|---|
+| `New(presetsPath)` | Load presets from JSON file |
+| `SetProjectRoot(root)` | Store default project root for relative lookups |
+| `List(activeID)` | Return all chains with active marker |
+| `Get(id)` | Resolve by profile id or numeric chain-id |
+| `Register(req)` | Add/update a custom chain (requires id, chain_id, rpc_url) |
+| `Resolve(chainID, rpcURL, activeID)` | Pick chain from id, inline rpc, or active |
+| `AvailableIDs()` | Return chain ids with configured RPC |
+
+### Default presets path
+
+```go
+func DefaultPresetsPath(projectRoot string) string {
+    return filepath.Join(projectRoot, "chains", "presets.json")
+}
+```
+
+---
+
+## Modifying the chain manager
 
 | What to change | Where |
 |---|---|
-| Add preset | `chains/presets.json` |
-| Add feature flag | `internal/chains/chains.go` — `ChainProfile.Features` |
-| Persist custom chains | `internal/chains/chains.go` — save to file on register |
-| Add chain health check | `internal/chains/chains.go` — `HealthCheck` method |
+| Add chain field | `pkg/types/chain.go` - `ChainProfile` |
+| Change preset format | `internal/chains/chains.go` - `presetsFile` struct |
+| Add chain validation | `internal/chains/chains.go` - `Register` method |
+| Persist custom chains | `internal/chains/chains.go` - add file write on `Register` |
