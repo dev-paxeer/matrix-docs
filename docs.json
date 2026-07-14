@@ -9,7 +9,7 @@
   },
   "appearance": {
     "default": "dark",
-    "strict": false
+    "strict": true
   },
   "api": {
     "openapi": [
