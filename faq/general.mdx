@@ -1,23 +1,23 @@
 ---
 title: General FAQ
-description: "High-level questions about Matrix: what it is, how the three layers work, how it relates to Paxeer, and why it uses typed intents."
+description: "High-level questions about Matrix: what it is, how Neo works, how the layers fit together, and why it uses typed intents."
 ---
 
 <AccordionGroup>
   <Accordion title="What is Matrix?">
-    Matrix is the cognition layer built for the Paxeer Network. It extends language models beyond conversation into real execution: agent-to-agent on-chain financial coordination, high-risk task execution, and safe handling of critical, confidential work. It compiles natural language into typed, inspectable Intents that an agent can execute without the ambiguity of human reasoning leaking into the parts that must be exact.
+    Matrix is an agent framework that takes language models past chat and into real execution. The default agent, **Neo**, runs a recursive tool-calling loop with persistent memory and a full MCP tool surface. Everyday work stays in the Neo loop. When work becomes monetary, irreversible, or compliance-sensitive, Neo escalates to the MCL pipeline, where intents are compiled into typed, signed, replayable artifacts.
   </Accordion>
 
   <Accordion title="What are the three layers of Matrix?">
-    **1. The Matrix Compiler (MCL):** A cohort of three rigorous agents that communicate, plan, and act over a closed-verb protocol. Handles money, irreversible operations, and confidential tasks with machine exactness.
+    **1. Neo (the loop):** The default conversational agent. A recursive tool-calling loop with persistent memory, tool transparency, swarms, and autonomous execution. Handles all reversible work directly.
 
-    **2. Cortex:** A per-actor typed memory engine with an append-only journal, Merkle-anchored snapshots, and byte-deterministic replay. Gives every agent persistent, durable memory.
+    **2. MCL (the compiler):** A cohort of three rigorous agents that communicate over a closed-verb protocol. Handles money, irreversible operations, and confidential tasks with machine exactness.
 
-    **3. The Loop Manager:** The per-agent runtime that coordinates the exchange between user, LLM, and Cortex, and escalates to MCL the moment work becomes consequential.
+    **3. Cortex (the memory):** A per-actor typed memory engine with an append-only journal, Merkle-anchored snapshots, and byte-deterministic replay. Gives every agent persistent, durable memory.
   </Accordion>
 
   <Accordion title="What is Neo and how does it relate to MCL?">
-    Neo is the default conversational agent. It runs inside the Loop Manager with tools like shell, code execution, fetch, browser, web search, and chain access available for reversible work. The instant stakes rise (money moves, a signature is needed, an irreversible write), the Loop Manager escalates to MCL through `core_execute`. Control returns to Neo once rigor is no longer required. Both share one memory and execution substrate.
+    Neo is the default agent. It runs inside the Loop Manager with tools like shell, code execution, fetch, browser, web search, and chain access available for reversible work. The instant stakes rise (money moves, a signature is needed, an irreversible write), Neo escalates to MCL through `core_execute`. Control returns to Neo once rigor is no longer required. Both share one memory and execution substrate.
   </Accordion>
 
   <Accordion title="Why typed intents instead of just prompting?">
@@ -25,7 +25,7 @@ description: "High-level questions about Matrix: what it is, how the three layer
   </Accordion>
 
   <Accordion title="How does Matrix relate to Paxeer?">
-    Paxeer Network (Chain ID 125) is the underlying L1 blockchain: 400ms blocks, 400ms finality, purpose-built for agentic workloads. Matrix is the agent layer above it. Matrix meters LLM usage in PAX, settles agent balances via LayerX, and reaches the chain through the `paxeer-net` MCP server. The Paxeer Embedded Wallet handles custody and spend policy at the network layer.
+    Paxeer Network (Chain ID 125) is the underlying L1 blockchain: 400ms blocks, fast finality, purpose-built for agentic workloads. Matrix agents reach the chain through the `paxeer-net` MCP server. The Paxeer Embedded Wallet handles custody and spend policy at the network layer. Matrix meters LLM usage in PAX and settles agent balances via LayerX on Paxeer.
   </Accordion>
 
   <Accordion title="What is the closed-verb protocol?">
