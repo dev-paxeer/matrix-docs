@@ -1,7 +1,7 @@
 {
   "$schema": "https://jamdesk.com/docs.json",
   "name": "Matrix",
-  "theme": "jam",
+  "theme": "pulsar",
   "colors": {
     "primary": "#353530",
     "light": "#1b1b19",
@@ -302,20 +302,9 @@
     ]
   },
   "favicon": "https://www.matrixmcl.com/matrix/logomatrix.png",
+  "fonts": {
+    "family": ""
+  },
   "logo": "logo/matrix-wordmark.png",
-  "footer": {
-    "socials": {
-      "github": "https://github.com/PaxLabs-inc",
-      "x": "https://x.com/paxeer_app",
-    },
-    "links": [
-      {
-        "header": "Products",
-        "items": [
-          { "label": "Matrix", "href": "https://matrixmcl.com/product" },
-          { "label": "Paxeer Network", "href": "https://paxeer.app" },
-        ]
-      }
-    ]
-  }
+  "footer": {}
 }
